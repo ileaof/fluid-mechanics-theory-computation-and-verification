@@ -12,7 +12,7 @@
 [![NumPy](https://img.shields.io/badge/NumPy-≥1.25-013243.svg)](https://numpy.org/)
 [![SciPy](https://img.shields.io/badge/SciPy-≥1.11-8CAAE6.svg)](https://scipy.org/)
 [![Matplotlib](https://img.shields.io/badge/Matplotlib-≥3.7-3776AB.svg)](https://matplotlib.org/)
-[![License](https://img.shields.io/badge/License-Educational%2FResearch-lightgrey.svg)](#license)
+[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-orange.svg)](LICENSE)
 [![Verification](https://img.shields.io/badge/Method-Verification--driven-success.svg)](#computational-philosophy)
 [![CFDPy](https://img.shields.io/badge/CFD-CFDPy-orange.svg)](CFDPY/README.md)
 
@@ -956,9 +956,15 @@ and refer to the simulator's own documentation for the methods implemented:
 
 ### License
 
-Educational and research use. See the source headers in `CFDPY/` for attribution. The chapter
-programs are released for study, teaching, and non-commercial research; please credit the
-textbook when redistributing or deriving from them.
+This repository — the chapter programs, the CFDPy simulator, and the companion
+documentation — is licensed under a
+**Creative Commons Attribution-NonCommercial 4.0 International (CC-BY-NC-4.0)** license.
+See the [`LICENSE`](LICENSE) file for the full legal text.
+
+In short, you are free to **share** and **adapt** the material for any non-commercial
+purpose, provided you give appropriate credit to the textbook and indicate any changes
+made. Commercial use requires a separate license from the maintainer. The CFD simulator
+source headers carry attribution notices that must be preserved on redistribution.
 
 ### Contributing
 
