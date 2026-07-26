@@ -787,7 +787,7 @@ Clone the repository and install the runtime stack. The simulator's pinned depen
 [`CFDPY/requirements.txt`](CFDPY/requirements.txt):
 
 ```bash
-git clone https://github.com/<org>/Fluid-Mechanics-ebook.git
+git clone https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification.git
 cd Fluid-Mechanics-ebook
 
 # core + recommended extras
@@ -942,7 +942,7 @@ and refer to the simulator's own documentation for the methods implemented:
                A Finite-Volume Approach with Python},
   year      = {2026},
   note      = {Companion Python repository and CFDPy simulator},
-  url       = {https://github.com/<org>/Fluid-Mechanics-ebook}
+  url       = {https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification}
 }
 
 @software{CFDPy2026,
@@ -950,7 +950,7 @@ and refer to the simulator's own documentation for the methods implemented:
   year        = {2026},
   howpublished = {Companion code to \emph{Fluid Mechanics: Theory,
                   Computation, and Verification}},
-  url         = {https://github.com/<org>/Fluid-Mechanics-ebook/tree/main/CFDPY}
+  url         = {https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification/tree/main/CFDPY}
 }
 ```
 
