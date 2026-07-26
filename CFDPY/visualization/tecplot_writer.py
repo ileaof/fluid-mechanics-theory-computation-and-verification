@@ -1,15 +1,33 @@
 """Tecplot 360 ASCII ``.dat`` exporter.
 
-Writes a structured IJ-ordered (2D) or IJK-ordered (3D) FE/point dataset in the
-Tecplot ASCII format understood by Tecplot 360.  Each frame is exported with the
+Writes a structured IJ-ordered (2D) or IJK-ordered (3D) point dataset in the
+modern Tecplot 360 ASCII format -- the same dialect emitted by the
+``py2tec``/``tec2py`` tools (https://github.com/luohancfd/py2tec), which is
+what current Tecplot 360 reads reliably.  Each frame is exported with the
 variables::
 
     X  Y  Z  U  V  W  Pressure  Temperature  Alpha
 
+The file layout is::
+
+    TITLE = "CFDPY snapshot t=..."
+    VARIABLES = "X","Y","Z","U","V","W","Pressure","Temperature","Alpha"
+    ZONE T="t=..." ZONETYPE=ORDERED I=Nx J=Ny [K=Nz]
+         DATAPACKING=POINT STRANDID=1 SOLUTIONTIME=...
+    <one line per node, all variables per line, I varies fastest>
+
+The zone is a structured **ORDERED** zone with **POINT** data packing (one
+record per node, all variables on the same line).  This replaces the legacy
+``F=POINT`` token -- a deprecated finite-element specifier that conflicts with
+``DATAPACKING`` and is rejected by current Tecplot 360.  Node values are
+flattened in Fortran order so the I (x) index varies fastest, then J (y), then
+K (z), which is the ordering Tecplot expects for an ORDERED zone.
+
 The exporter is intentionally ASCII-only (no binary Tecplot variant) to match
 the project specification and remain trivially diffable.  Files are written
 with a single zone per file (one time step) so they can be appended into a
-time-sequence by the :class:`Simulation` loop.
+time-sequence by the :class:`Simulation` loop, and each file round-trips
+through ``py2tec.tec2py``.
 """
 
 from __future__ import annotations
@@ -42,21 +60,18 @@ class TecplotExporter:
         if alpha is None:
             alpha = np.zeros_like(u)
 
-        lines: list[str] = []
-        title = f"CFDPY snapshot t={time:.6f}"
-        lines.append(f'TITLE = "{title}"')
-        varnames = ["X", "Y", "Z", "U", "V", "W", "Pressure", "Temperature", "Alpha"]
-        lines.append('VARIABLES = "' + '" "'.join(varnames) + '"')
-        if mesh.is_2d:
-            lines.append(
-                f"ZONE I={Nx}, J={Ny}, K=1, F=POINT, "
-                f'DATAPACKING=POINT, SOLUTIONTIME={time:.6f}')
-        else:
-            lines.append(
-                f"ZONE I={Nx}, J={Ny}, K={Nz}, F=POINT, "
-                f'DATAPACKING=POINT, SOLUTIONTIME={time:.6f}')
+        varnames = ["X", "Y", "Z", "U", "V", "W",
+                    "Pressure", "Temperature", "Alpha"]
+        zonename = f"t={time:.6f}"
+        # Modern ORDERED zone header (py2tec dialect): ZONETYPE=ORDERED with
+        # DATAPACKING=POINT -- no legacy F=POINT token.  STRANDID groups the
+        # per-file time steps into one strand for Tecplot's time animation.
+        dims = f"I={Nx} J={Ny}" if mesh.is_2d else f"I={Nx} J={Ny} K={Nz}"
+        zone = (f'ZONE T="{zonename}" ZONETYPE=ORDERED {dims} '
+                f'DATAPACKING=POINT STRANDID=1 SOLUTIONTIME={time:.6f}')
 
-        # Flatten in Fortran order to match I,J,K ordering expected by Tecplot.
+        # Flatten in Fortran order so I (x) varies fastest, then J (y), then
+        # K (z) -- the ordering an ORDERED POINT zone expects.
         X = mesh.Xc.ravel(order="F")
         Y = mesh.Yc.ravel(order="F")
         Z = mesh.Zc.ravel(order="F")
@@ -69,9 +84,12 @@ class TecplotExporter:
 
         rows = np.stack([X, Y, Z, U, V, W, P, TT, A], axis=1)
         with open(path, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines) + "\n")
+            fh.write(f'TITLE = "CFDPY snapshot t={time:.6f}"\n')
+            fh.write('VARIABLES = ' + ','.join(f'"{n}"' for n in varnames) + '\n')
+            fh.write(zone + '\n')
             for r in rows:
                 fh.write(" ".join(f"{val:.6e}" for val in r) + "\n")
+            fh.write("\n")
         return path
 
     # ------------------------------------------------------------------ #

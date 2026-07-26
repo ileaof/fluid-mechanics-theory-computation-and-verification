@@ -62,7 +62,11 @@ compressible / radiation / phase-change / species models.
   - **Matplotlib**: pressure / temperature / velocity contours, vector
     quiver, streamlines, VOF interface contour, and MP4 / GIF animations;
   - **Tecplot**: ASCII `.dat` files for Tecplot 360 exporting
-    `X Y Z U V W P T Alpha`.
+    `X Y Z U V W P T Alpha`.  Uses the modern `ZONETYPE=ORDERED` /
+    `DATAPACKING=POINT` dialect (the same as the
+    [py2tec](https://github.com/luohancfd/py2tec) tools) and round-trips through
+    `py2tec.tec2py`; one ORDERED zone per time step with `STRANDID` +
+    `SOLUTIONTIME` for time animation.
 - **Outputs produced simultaneously**: CSV, HDF5, Tecplot `.dat`, PNG, MP4/GIF.
 - **Numba-accelerated**: the performance-critical element-wise TVD flux
   limiters are JIT-compiled with `@njit` (`numerics/numba_kernels.py`), with a
@@ -153,7 +157,8 @@ python main.py examples/natural_convection_2D/config.json
 
 Outputs: temperature & pressure PNGs, vector & streamline overlays, the
 time history CSV (with the mean Nusselt number on the hot wall), Tecplot
-`.dat` frames, HDF5 snapshots, and `*_T.mp4` / `*_p.mp4` animations.
+`.dat` frames, HDF5 snapshots, and `*_T.mp4` / `*_p.mp4` / `*_velocity.mp4`
+animations.
 
 ### Example 2 — Dam break
 
@@ -167,7 +172,7 @@ python main.py examples/dam_break_2D/config.json
 
 Outputs: free-surface evolution (α contour on the temperature PNG), pressure
 PNGs, Tecplot `.dat` frames, HDF5 snapshots, and `*_alpha.mp4` / `*_p.mp4` /
-`*_T.mp4` animations.
+`*_T.mp4` / `*_velocity.mp4` animations.
 
 ### Example 3 — Flow over a backward-facing step
 
@@ -187,7 +192,8 @@ python main.py examples/backward_facing_step/config.json
 ```
 
 Outputs: pressure & temperature PNGs with velocity-vector overlays, Tecplot
-`.dat` frames, CSV & HDF5 snapshots, and `*_T.mp4` / `*_p.mp4` animations.
+`.dat` frames, CSV & HDF5 snapshots, and `*_T.mp4` / `*_p.mp4` /
+`*_velocity.mp4` animations.
 
 ### Example 4 — The splash of a liquid drop
 
@@ -261,6 +267,26 @@ never completes and `history.csv` is not written.  The `"flow_streamlines"`
 flag (default `true`) gates the overlay; set it to `false` for free-surface
 cases to keep `finalize()` responsive (the speed-magnitude + quiver overlay is
 still rendered).  The splash and dam-break cases set it to `false`.
+
+#### Tecplot `.dat` output format
+
+`TecplotExporter.write` emits the modern Tecplot 360 ASCII dialect used by the
+[py2tec](https://github.com/luohancfd/py2tec) tools — one structured `ORDERED`
+zone per time step with `POINT` data packing:
+
+```
+TITLE = "CFDPY snapshot t=..."
+VARIABLES = "X","Y","Z","U","V","W","Pressure","Temperature","Alpha"
+ZONE T="t=..." ZONETYPE=ORDERED I=Nx J=Ny [K=Nz]
+     DATAPACKING=POINT STRANDID=1 SOLUTIONTIME=...
+<one line per node, all 9 variables, I (x) varies fastest>
+```
+
+This replaces the legacy `F=POINT` token (a deprecated finite-element
+specifier that conflicts with `DATAPACKING` and is rejected by current
+Tecplot 360).  The files round-trip through `py2tec.tec2py`, and `STRANDID` +
+`SOLUTIONTIME` let Tecplot chain the per-step files into a time animation.  All
+four example output directories ship their `frame_*.dat` in this format.
 
 #### Immersed obstacles (blocked cells)
 
@@ -587,14 +613,16 @@ CFDPython/
 │   └── vof.py               #   conservative VOF transport, properties, interface
 ├── visualization/
 │   ├── matplotlib_view.py   #   MatplotlibViewer: PNG + MP4/GIF
-│   ├── tecplot_writer.py    #   TecplotExporter: .dat / .csv / .h5
+│   ├── tecplot_writer.py    #   TecplotExporter: .dat (py2tec dialect) / .csv / .h5
 │   └── postprocessor.py     #   vorticity, streamfunction, Nusselt
 ├── examples/
 │   ├── natural_convection_2D/config.json
 │   ├── dam_break_2D/config.json
 │   ├── backward_facing_step/config.json
 │   └── liquid_drop_splash_2D/config.json
-└── outputs/                 # created at runtime, one folder per case
+├── outputs/                 # created at runtime, one folder per case
+├── README.md                #   this file
+└── Handoff.md               #   notes on the splash example, restart & Tecplot work
 ```
 
 ### Design principles
