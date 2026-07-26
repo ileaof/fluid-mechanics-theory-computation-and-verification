@@ -1,0 +1,25 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+
+# --- CFD simulator generated outputs (PNG/CSV/Tecplot/HDF5/MP4/GIF, run logs) ---
+CFDPY/outputs/
+**/outputs/
+
+# --- Scratch / transient debug files ---
+_vel_check.json
+_vel_out.txt
+*_run.log
+*_run_ext.log
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
