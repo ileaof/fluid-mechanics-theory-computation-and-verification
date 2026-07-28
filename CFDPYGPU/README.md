@@ -1,6 +1,6 @@
-# CFDPy — a modular Finite-Volume CFD framework in Python
+# CFDPyGPU — a modular Finite-Volume CFD framework in Python
 
-CFDPy is an **educational and professional** Computational Fluid Dynamics
+CFDPyGPU is an **educational and professional** Computational Fluid Dynamics
 framework written from scratch in Python 3.12+ (no OpenFOAM, FEniCS or FiPy).
 It solves the incompressible Navier–Stokes equations together with energy,
 scalar transport and Volume-of-Fluid (VOF) free-surface models on a Cartesian
@@ -120,12 +120,12 @@ pip install pyyaml meshio pyvista
 ```
 
 A working **ffmpeg** binary on the system `PATH` enables MP4 animation; if
-ffmpeg is absent or the codec is unavailable, CFDPy automatically falls back to
+ffmpeg is absent or the codec is unavailable, CFDPyGPU automatically falls back to
 a pillow-written **GIF**.
 
 ### No build step
 
-CFDPy is pure Python — just clone/copy the directory and run `main.py` from the
+CFDPyGPU is pure Python — just clone/copy the directory and run `main.py` from the
 project root so that the package imports (`config`, `mesh`, `numerics`, …)
 resolve.
 
@@ -564,7 +564,7 @@ Boussinesq buoyancy (natural convection):
 
    The operator has a one-dimensional null space (the constant pressure
    field, since only Neumann BCs appear).  Rather than pinning a matrix row
-   — which would alter the sparsity pattern every time `ρ` changes — CFDPy
+   — which would alter the sparsity pattern every time `ρ` changes — CFDPyGPU
    keeps the **pure symmetric operator** (constant sparsity, cacheable) and
    removes the null space analytically: the RHS is mean-projected before the
    solve and the solution is mean-subtracted afterwards.
