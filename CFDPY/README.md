@@ -140,6 +140,7 @@ python main.py examples/natural_convection_2D/config.json
 python main.py examples/dam_break_2D/config.json
 python main.py examples/backward_facing_step/config.json
 python main.py examples/liquid_drop_splash_2D/config.json
+python main.py examples/cylinder_flow/config.json
 ```
 
 Each run prints a header, a progress bar, and writes all configured outputs to
@@ -319,16 +320,22 @@ only the rendered `.wmv` animations under `outputs/` are (see the root
 #### Immersed obstacles (blocked cells)
 
 Internal geometry that the boundary patches cannot express — a step, a flap, a
-cylinder approximated by a staircase — is added through the `"obstacles"`
-list.  Each entry is an axis-aligned box in physical coordinates:
+cylinder — is added through the `"obstacles"` list.  Each entry is a **shape
+dict**: an axis-aligned **box**, a circular **cylinder**, or a 3-D **sphere**,
+in physical coordinates:
 
 ```json
 "obstacles": [
-    {"x0": 0.0, "x1": 2.0, "y0": 0.0, "y1": 1.0}
+    {"x0": 0.0, "x1": 2.0, "y0": 0.0, "y1": 1.0},                          // box
+    {"shape": "cylinder", "center": [5.0, 2.05], "radius": 0.5, "axis": "z"}  // cylinder
 ]
 ```
 
-A cell whose centre lies inside any box is flagged solid.  The framework then:
+A cell whose centre lies inside any obstacle is flagged solid — a box by the
+coordinate test above, a `z`-axis cylinder by `(Xc−cx)² + (Yc−cy)² ≤ r²`, a
+sphere by the 3-D analogue.  A curved body is a cell-resolution **staircase**
+(the boundary is jagged at O(*dx*) and converges only under mesh refinement).
+The framework then:
 
 * zeroes the normal **face flux** at every solid/fluid interface (no-penetration),
   threaded through every face-flux routine (`momentum`, `pressure`, `projection`);
@@ -339,6 +346,47 @@ A cell whose centre lies inside any box is flagged solid.  The framework then:
 No matrix row is pinned and no sparsity pattern is altered, so the cached
 variable-coefficient Poisson matrix and its ILU factorisation stay valid — the
 obstacle is a pure data mask layered on top of the existing solvers.
+
+### Example 5 — Flow past a circular cylinder
+
+The classic external-aerodynamics benchmark.  A cylinder of diameter `D = 1`
+is centred at `(5.0, 2.05)` in a `22 × 4.1` channel, with a uniform inlet
+`U∞ = 1` on the west boundary, a pressure outlet on the east boundary, slip
+walls top and bottom, and no-slip on the cylinder (a **staircase** immersed
+obstacle).  The viscosity is set from the Reynolds number
+`μ = ρ U∞ D / Re`; the shipped case uses `μ = 0.025` (`Re = 40`, the steady
+regime with a closed recirculation bubble behind the cylinder).
+
+```bash
+python main.py examples/cylinder_flow/config.json
+```
+
+The flow is **isothermal** — there is no conduction (`k = 0`), no buoyancy, and
+a uniform initial temperature, so the case sets **`"solve_energy": false`**: the
+temperature is a passive scalar with no physics, and evolving it on the
+collocated mesh would only inject a spurious, non-divergence-free drift (a
+uniform field can fall by hundreds of K over a long run for no physical reason).
+With the energy step skipped, `T` stays exactly at its initial value — the exact
+answer — and the flow is unaffected.
+
+Outputs: pressure & temperature PNGs with velocity-vector overlays, `*_T.mp4` /
+`*_p.mp4` / `*_velocity.mp4` animations, Tecplot `.dat` frames, and CSV & HDF5
+snapshots.  Inspect the growing wake in the velocity and pressure fields.
+
+> **Cost & resolution.**  The shipped case is `Nx×Ny = 200×80` (≈9 cells across
+> the diameter) to `tfinal = 20`, which runs in roughly **10–15 min** on a
+> single core.  Lower `mu` (e.g. `0.01` → `Re = 100`) to get the unsteady von
+> Kármán vortex street, and refine the mesh for a sharper wake.
+>
+> **Accuracy caveat.**  The cylinder is a **staircase** (cell-mask
+> rasterisation), which pins flow separation at the staircase corners, so the
+> drag does **not** match the literature at feasible resolutions — this case is
+> a demonstration of flow past a bluff body, not a validated `Cd`/`Cl`
+> benchmark.  The GPU variant ([`../CFDPYGPU/`](../CFDPYGPU/README.md)) carries
+> the force-integration harness and an experimental immersed-boundary method;
+> see its [`Handoff_Cylinder.md`](../CFDPYGPU/Handoff_Cylinder.md) for the full
+> validation analysis.  Force coefficients are **not** computed in this CPU
+> variant.
 
 ---
 
@@ -648,7 +696,8 @@ CFDPY/
 │   ├── natural_convection_2D/config.json
 │   ├── dam_break_2D/config.json
 │   ├── backward_facing_step/config.json
-│   └── liquid_drop_splash_2D/config.json
+│   ├── liquid_drop_splash_2D/config.json
+│   └── cylinder_flow/config.json    # isothermal flow past a staircase cylinder
 ├── outputs/                 # created at runtime, one folder per case
 ├── README.md                #   this file
 └── Handoff.md               #   notes on the splash example, restart & Tecplot work

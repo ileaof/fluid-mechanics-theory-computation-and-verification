@@ -190,22 +190,44 @@ class Simulation:
     # Immersed obstacles
     # ================================================================== #
     def _build_solid_mask(self) -> np.ndarray | None:
-        """Build the cell-centred solid mask from the configured boxes.
+        """Build the cell-centred solid mask from the configured obstacles.
 
-        Each entry of ``cfg.obstacles`` is a tuple
-        ``(x0, x1, y0, y1, z0, z1)`` describing an axis-aligned box in physical
-        coordinates.  A cell is marked solid when its centre lies inside any
-        box.  Returns ``None`` when no obstacles are configured.
+        Each entry of ``cfg.obstacles`` is a shape dict (see
+        :attr:`Config.obstacles`).  A cell is marked solid when its centre lies
+        inside any obstacle.  Supported shapes: ``box`` (axis-aligned box),
+        ``cylinder`` (circular cylinder of infinite extent along an axis -- the
+        2-D xy-plane case uses ``axis="z"``), and ``sphere`` (3-D).  A curved
+        body is approximated by a cell-resolution "staircase" -- the boundary is
+        jagged at O(dx) and converges only under mesh refinement.  Returns
+        ``None`` when no obstacles are configured.
         """
         if not self.cfg.obstacles:
             return None
         mesh = self.mesh
         Xc, Yc, Zc = mesh.cell_grid()
         solid = np.zeros(mesh.cell_shape, dtype=bool)
-        for (x0, x1, y0, y1, z0, z1) in self.cfg.obstacles:
-            solid |= ((Xc >= x0) & (Xc <= x1) &
-                      (Yc >= y0) & (Yc <= y1) &
-                      (Zc >= z0) & (Zc <= z1))
+        for ob in self.cfg.obstacles:
+            shape = ob.get("shape", "box")
+            if shape == "box":
+                solid |= ((Xc >= ob["x0"]) & (Xc <= ob["x1"]) &
+                          (Yc >= ob["y0"]) & (Yc <= ob["y1"]) &
+                          (Zc >= ob["z0"]) & (Zc <= ob["z1"]))
+            elif shape == "cylinder":
+                cx, cy = ob["center"]
+                r = ob["radius"]
+                axis = ob.get("axis", "z")
+                if axis == "z":
+                    inside = (Xc - cx) ** 2 + (Yc - cy) ** 2 <= r ** 2
+                elif axis == "y":
+                    inside = (Xc - cx) ** 2 + (Zc - cy) ** 2 <= r ** 2
+                else:  # axis == "x"
+                    inside = (Yc - cx) ** 2 + (Zc - cy) ** 2 <= r ** 2
+                solid |= inside
+            elif shape == "sphere":
+                cx, cy, cz = ob["center"]
+                r = ob["radius"]
+                solid |= ((Xc - cx) ** 2 + (Yc - cy) ** 2 +
+                          (Zc - cz) ** 2) <= r ** 2
         return solid
 
     def _apply_obstacle(self, u: np.ndarray, v: np.ndarray,
@@ -278,9 +300,12 @@ class Simulation:
         # clamp the velocity inside any immersed solid (direct forcing)
         self._apply_obstacle(s.u, s.v, s.w)
 
-        # Energy step (only if temperature is part of the physics -- it always is
-        # here, but a pure-isothermal case can keep T constant).
-        s.T = self.energy.step(s.T, s.u, s.v, s.w, dt)
+        # Energy step.  Skipped for a genuinely isothermal case (no conduction,
+        # no buoyancy feedback, uniform T): there the temperature is a passive
+        # scalar and advecting it on the collocated mesh only injects a spurious
+        # non-divergence-free drift, so keeping T constant is the exact answer.
+        if self.cfg.solve_energy:
+            s.T = self.energy.step(s.T, s.u, s.v, s.w, dt)
 
         # VOF transport
         if self.vof is not None and s.alpha is not None:

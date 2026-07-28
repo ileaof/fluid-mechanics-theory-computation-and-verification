@@ -129,6 +129,19 @@ class Config:
     boussinesq: bool = False
     t_ref: float = 300.0
 
+    # -- Energy (temperature) transport ------------------------------------
+    # Solve the temperature advection-diffusion equation each step.  For a
+    # genuinely isothermal case -- no conduction (``k == 0``), no buoyancy
+    # feedback (``boussinesq`` off) and a uniform initial temperature -- the
+    # temperature carries no physics and is a passive scalar.  On a collocated
+    # mesh advecting that scalar with the cell-to-face averaged velocity is not
+    # discretely divergence-free (only the projected face flux is), so a uniform
+    # field drifts by hundreds of K over a long run for no physical reason.
+    # Set this to ``false`` for such cases (e.g. isothermal flow past a
+    # cylinder): T stays at its initial value, which is the exact physical
+    # answer.  Defaults to ``true`` for the thermal examples.
+    solve_energy: bool = True
+
     # -- Boundary conditions ------------------------------------------------
     velocity_bc: dict[str, BoundarySpec] = field(default_factory=dict)
     pressure_bc: dict[str, BoundarySpec] = field(default_factory=dict)
@@ -175,13 +188,18 @@ class Config:
     # splash / dam-break cases; set this to False there to keep finalize()
     # responsive (the speed-magnitude + quiver overlay is still rendered).
     flow_streamlines: bool = True
-    # Immersed solid obstacles (blocked cells), each an axis-aligned box in
-    # physical coordinates ``[x0, x1] x [y0, y1] x [z0, z1]``.  Cells whose centre
-    # lies inside a box are treated as solid (no-slip, no-flux) via direct
+    # Immersed solid obstacles (blocked cells).  Each entry is a shape dict:
+    # an axis-aligned box ``{"x0":..,"x1":..,"y0":..,"y1":..[,"z0":..,"z1":..]}``,
+    # a circular ``{"shape":"cylinder","center":[cx,cy],"radius":r,"axis":"z"}``
+    # (2-D xy-plane cylinder for ``axis="z"``), or a 3-D
+    # ``{"shape":"sphere","center":[cx,cy,cz],"radius":r}``.  Cells whose centre
+    # lies inside an obstacle are treated as solid (no-slip, no-flux) via direct
     # forcing on the collocated grid -- the face fluxes at solid/fluid
-    # interfaces are zeroed and the velocity in solid cells is clamped to
-    # zero.  This is how the backward-facing step (an internal obstacle) is
-    # represented on a Cartesian structured mesh.
+    # interfaces are zeroed and the velocity in solid cells is clamped to zero.
+    # A curved body is a cell-resolution "staircase" (O(dx) jagged boundary,
+    # convergent only under refinement).  This is how the backward-facing step
+    # (a box) and the flow-past-a-cylinder case are represented on a Cartesian
+    # structured mesh.
     obstacles: list = field(default_factory=list)
 
     # ------------------------------------------------------------------ #
@@ -224,17 +242,39 @@ class Config:
         if "gravity" in merged and isinstance(merged["gravity"], (list, tuple)):
             merged["gravity"] = tuple(float(g) for g in merged["gravity"])
 
-        # Obstacles: list of box dicts -> list of (x0,x1,y0,y1,z0,z1) tuples.
+        # Obstacles: normalise each entry to a shape dict (box / cylinder /
+        # sphere).  Kept as dicts (not tuples) so ``_build_solid_mask`` can
+        # dispatch on the shape -- this matches the CFDPyGPU variant so a case
+        # file runs unchanged on either.
         if "obstacles" in merged and isinstance(merged["obstacles"], list):
-            boxes = []
+            norm = []
             for b in merged["obstacles"]:
-                if isinstance(b, dict):
-                    boxes.append((
-                        float(b.get("x0", 0.0)), float(b.get("x1", 0.0)),
-                        float(b.get("y0", 0.0)), float(b.get("y1", 0.0)),
-                        float(b.get("z0", -1e9)), float(b.get("z1", 1e9)),
-                    ))
-            merged["obstacles"] = boxes
+                if not isinstance(b, dict):
+                    continue
+                shape = b.get("shape", "box")
+                if shape == "box":
+                    norm.append({
+                        "shape": "box",
+                        "x0": float(b.get("x0", 0.0)), "x1": float(b.get("x1", 0.0)),
+                        "y0": float(b.get("y0", 0.0)), "y1": float(b.get("y1", 0.0)),
+                        "z0": float(b.get("z0", -1e9)), "z1": float(b.get("z1", 1e9)),
+                    })
+                elif shape == "cylinder":
+                    c = b.get("center", [0.0, 0.0])
+                    norm.append({
+                        "shape": "cylinder",
+                        "center": (float(c[0]), float(c[1])),
+                        "radius": float(b.get("radius", 0.0)),
+                        "axis": str(b.get("axis", "z")),
+                    })
+                elif shape == "sphere":
+                    c = b.get("center", [0.0, 0.0, 0.0])
+                    norm.append({
+                        "shape": "sphere",
+                        "center": (float(c[0]), float(c[1]), float(c[2])),
+                        "radius": float(b.get("radius", 0.0)),
+                    })
+            merged["obstacles"] = norm
 
         # Sanity: only assign known fields (ignore unknown keys gracefully).
         known = set(cfg.__dict__.keys())

@@ -1,0 +1,73 @@
+{
+    "name": "cylinder_flow",
+
+    "Nx": 200,
+    "Ny": 80,
+    "Nz": 1,
+    "Lx": 22.0,
+    "Ly": 4.1,
+    "Lz": 1.0,
+
+    "dt": 0.05,
+    "tfinal": 20.0,
+    "time_scheme": "implicit",
+    "adaptive_dt": true,
+    "cfl_max": 0.3,
+    "dt_min": 1e-6,
+    "dt_max": 0.05,
+
+    "rho": 1.0,
+    "mu": 0.025,
+    "cp": 1.0,
+    "k": 0.0,
+    "beta": 0.0,
+    "gravity": [0.0, 0.0, 0.0],
+
+    "boussinesq": false,
+    "use_vof": false,
+    "solve_energy": false,
+
+    "convection": "tvd",
+    "limiter": "vanleer",
+    "linear_solver": "bicgstab",
+    "linear_tol": 1e-6,
+    "linear_maxiter": 2000,
+    "poisson_tol": 1e-7,
+    "poisson_maxiter": 3000,
+    "use_ilu": true,
+
+    "velocity_bc": {
+        "west":  {"kind": "inlet", "value": 1.0},
+        "east":  "outlet",
+        "south": "slip",
+        "north": "slip"
+    },
+    "temperature_bc": {
+        "west": "adiabatic", "east": "adiabatic",
+        "south": "adiabatic", "north": "adiabatic"
+    },
+    "pressure_bc": {
+        "west": "neumann", "east": "neumann",
+        "south": "neumann", "north": "neumann"
+    },
+
+    "obstacles": [
+        {"shape": "cylinder", "center": [5.0, 2.05], "radius": 0.5, "axis": "z"}
+    ],
+
+    "t0": 300.0,
+    "u0": 1.0,
+    "v0": 0.0,
+    "w0": 0.0,
+
+    "output_dir": "outputs/cylinder_flow",
+    "output_interval": 0.5,
+    "save_csv": true,
+    "save_hdf5": true,
+    "save_tecplot": true,
+    "save_png": true,
+    "save_mp4": true,
+    "verbose": true,
+    "plot_interval": 10,
+    "flow_streamlines": false
+}
