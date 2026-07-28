@@ -657,7 +657,7 @@ ProjectionMethod.step(u, v, w, p, dt, sources, rho):
 ## Project organization
 
 ```
-CFDPython/
+CFDPYGPU/
 ├── main.py                  # CLI entry point + Simulation orchestrator
 ├── config/
 │   └── config_loader.py     # Config dataclass, BoundarySpec, JSON/YAML loader
@@ -698,8 +698,14 @@ CFDPython/
 │       └── benchmarks.py
 ├── outputs/                 # created at runtime, one folder per case
 ├── README.md                #   this file
-├── Handoff.md               #   notes on the splash example, restart & Tecplot work
-└── Handoff_cylinder.md      #   notes on the cylinder benchmark & staircase caveat
+├── GPU_PERFORMANCE_REPORT.md #   profiling + CPU-vs-GPU benchmarks + roadmap
+├── docs/                    #   developer handoff notes
+│   ├── Handoff.md           #     splash example, restart & Tecplot work
+│   └── Handoff_Cylinder.md  #     cylinder benchmark & staircase caveat
+└── tools/                   #   ad-hoc scripts: profiler, probes, algebraic checks
+    ├── profile_hotspots.py  #     cProfile per-step hotspot driver
+    ├── cylinder_probe.py    #     run a cylinder case, print Cd/Cl trajectory
+    └── verify_cut_cell_pressure.py  # algebraic checks for the cut-cell Poisson
 ```
 
 ### Design principles

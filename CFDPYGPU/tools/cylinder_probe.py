@@ -1,13 +1,14 @@
 """Probe helper kept for reuse: run a cylinder case and print the Cd/Cl trajectory.
 
 Usage: edit the `data.update({...})` block below for the desired mesh / Re /
-tfinal, then `python _probe.py`. Used during validation to inspect convergence
-behaviour without the full report writer.
+tfinal, then `python tools/cylinder_probe.py`. Used during validation to
+inspect convergence behaviour without the full report writer.
 """
 import sys, json, time
 from pathlib import Path
-HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
+HERE = Path(__file__).resolve().parent          # .../CFDPYGPU/tools
+ROOT = HERE.parent                               # .../CFDPYGPU
+CASE = ROOT / "examples" / "cylinder_flow"
 sys.path.insert(0, str(ROOT))
 from config import Config
 from main import Simulation
@@ -19,7 +20,7 @@ RE = 40.0
 TFINAL = 20.0
 # ------------------------------------------------------------------------ #
 
-data = json.loads((HERE / "config.json").read_text(encoding="utf-8"))
+data = json.loads((CASE / "config.json").read_text(encoding="utf-8"))
 data.update({
     "Nx": NX, "Ny": NY,
     "mu": 1.0 / float(RE),

@@ -6,7 +6,7 @@ the per-cell **fluid volume fraction** and the per-face **aperture fraction**
 the no-penetration wall at the *true* immersed boundary instead of at the
 staircase cell face -- the change that makes a bluff body separate at the true
 surface rather than at the staircase's 90 corners (see
-``Handoff_cylinder.md`` §3).
+``docs/Handoff_Cylinder.md`` §3).
 
 Only the cylinder-benchmark geometry is handled with cut cells here:
 

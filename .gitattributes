@@ -1,0 +1,22 @@
+# Normalize line endings: text files are stored as LF in the repo and
+# converted to the platform native EOL on checkout. Binary files are
+# marked explicitly so git never attempts EOL conversion on them.
+* text=auto eol=lf
+
+# --- Binary artifacts (never diff / never EOL-convert) ---
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.mp4  binary
+*.wmv  binary
+*.h5   binary
+*.csv  text
+*.dat  text
+*.py   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.txt  text eol=lf
+*.gitignore  text eol=lf

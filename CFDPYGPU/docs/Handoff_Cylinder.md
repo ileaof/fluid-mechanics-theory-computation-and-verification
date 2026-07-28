@@ -79,7 +79,7 @@ compliance / generality but is not what makes the forces correct.
 ## 2. Files changed
 - **New:** `solver/forces.py`, `examples/cylinder_flow/config.json`,
   `examples/cylinder_flow/run_reynolds.py`, `examples/cylinder_flow/benchmarks.py`,
-  `Handoff_cylinder.md`.
+  `docs/Handoff_Cylinder.md`.
 - **Modified:** `config/config_loader.py` (obstacle schema + cylinder/sphere),
   `main.py` (cylinder mask, `compute_forces` wiring, vorticity + force-history
   rendering), `solver/pressure.py` (`_rhie_chow`, pressure-outlet Dirichlet),
@@ -258,7 +258,7 @@ false` the cylinder case runs the stable snap+ghost path unchanged.
   dict so IBM/forces agree. Kills the spurious steady lift (Cl→0). **Kept ON**
   in the cylinder config — it is independent of the cut-cell flag and is a
   standalone improvement to the snap+ghost baseline.
-- **`verify_cut_cell_pressure.py`.** Algebraic checks (matrix clean, row-sum
+- **`tools/verify_cut_cell_pressure.py`.** Algebraic checks (matrix clean, row-sum
   ~1e-13, conditioning, finite solves, one-step bounded). Keep as the
   cut-cell regression test.
 
@@ -322,4 +322,4 @@ handling changes. Start there.
   the IBM mask uses it.
 - `config/config_loader.py` — `snap_obstacle_to_grid` (kept ON), `ibm_cut_cell`
   (OFF in the cylinder config).
-- `verify_cut_cell_pressure.py` (new) — algebraic regression test.
+- `tools/verify_cut_cell_pressure.py` (new) — algebraic regression test.

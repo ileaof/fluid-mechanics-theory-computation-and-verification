@@ -938,7 +938,6 @@ Fluid-Mechanics-ebook/
     ├── GPU_PERFORMANCE_REPORT.md      #   profiling + CPU-vs-GPU benchmarks + roadmap
     ├── main.py                        #   CLI entry point + Simulation orchestrator
     ├── requirements.txt               #   pinned Python dependencies (adds numba CUDA)
-    ├── profile_hotspots.py            #   cProfile driver for the per-step hotspots
     ├── config/                        #   case-file loader (JSON/YAML) + use_gpu flag
     │   └── config_loader.py
     ├── gpu/                           #   the GPU acceleration package (layered)
@@ -962,7 +961,14 @@ Fluid-Mechanics-ebook/
     │       ├── config.json
     │       ├── run_reynolds.py
     │       └── benchmarks.py
-    └── outputs/                       #   runtime output: PNG / CSV / .dat / HDF5 / MP4
+    ├── outputs/                       #   runtime output: PNG / CSV / .dat / HDF5 / MP4 (animations tracked)
+    ├── docs/                         #   developer handoff notes
+    │   ├── Handoff.md                #     splash example, restart & Tecplot work
+    │   └── Handoff_Cylinder.md       #     cylinder benchmark & staircase caveat
+    └── tools/                        #   ad-hoc scripts: profiler, probes, algebraic checks
+        ├── profile_hotspots.py       #     cProfile per-step hotspot driver
+        ├── cylinder_probe.py         #     run a cylinder case, print Cd/Cl trajectory
+        └── verify_cut_cell_pressure.py  # algebraic checks for the cut-cell Poisson
 ```
 
 ---

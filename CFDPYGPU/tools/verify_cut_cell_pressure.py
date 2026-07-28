@@ -7,7 +7,13 @@ Verifies, on a small cylinder mesh:
   * the cut-cell divergence of a uniform field is ~0 in full-fluid cells and
     bounded (not inf/nan) at cut cells;
   * PressureSolver.solve returns a finite, bounded pressure increment.
+
+Run from the CFDPYGPU root: ``python tools/verify_cut_cell_pressure.py``
+(the script puts the package root on ``sys.path`` itself, so cwd does not
+matter for imports).
 """
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from config.config_loader import Config
 from mesh.mesh import Mesh

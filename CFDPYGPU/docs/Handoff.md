@@ -91,7 +91,7 @@ regenerated from the saved HDF5 snapshots in the new format.
 | `examples/liquid_drop_splash_2D/config.json` | new example (splash_drop, tfinal=4.0, restart=frame_001242.h5, flow_streamlines=false) |
 | `examples/dam_break_2D/config.json` | added `"flow_streamlines": false` |
 | `README.md` | Example 4 section; Restart / checkpoint resume section; Velocity animation & streamline-hang section; new knobs in the "useful knobs" list; py2tec-format note on the Tecplot bullet; project tree entry |
-| `Handoff.md` | this file |
+| `docs/Handoff.md` | this file |
 
 No changes to the numerics, physics, or solver modules — the restart path and
 the splash init are pure additions layered on the existing solvers.

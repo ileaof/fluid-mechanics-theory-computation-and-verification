@@ -197,7 +197,7 @@ class Config:
     # interfaces and clamp every solid cell to zero.  The boundary is the
     # jagged cell-mask rasterisation, so the geometry error is O(dx) and -- for
     # a bluff body -- pins flow separation at the staircase corners (a
-    # mesh-independently wrong wake; see Handoff_cylinder.md §3).  ``"ibm"``
+    # mesh-independently wrong wake; see docs/Handoff_Cylinder.md §3).  ``"ibm"``
     # switches to the mirror-point ghost-cell method: the first solid layer
     # (ghost cells) is set to the negative of the bilinearly-interpolated image
     # value so the no-slip lands at the *true* immersed surface, not the cell
@@ -210,7 +210,7 @@ class Config:
     # in-plane axis) when building the solid mask.  An off-grid centre makes the
     # rasterised staircase lopsided and produces a spurious steady lift (e.g. the
     # cylinder at x=5.0 on a 400x160 mesh lands at cell 90.4, giving Cl~-0.65;
-    # see Handoff_cylinder.md §5).  Snapping to the nearest grid line makes the
+    # see docs/Handoff_Cylinder.md §5).  Snapping to the nearest grid line makes the
     # staircase mirror-symmetric so Cl -> 0, while moving the body by at most
     # h/4 -- well inside the rasterisation tolerance.  The snapped centre is
     # written back into the obstacle dict so the IBM geometry and the force
@@ -224,7 +224,7 @@ class Config:
     # (:class:`solver.cut_cell.CutCellGeometry`) instead of the staircase cell
     # face.  This is the change that makes a bluff body separate at the true
     # surface (the staircase + tangential-ghost IBM alone does not; see
-    # ``Handoff_cylinder.md`` §3a).  The solid mask used throughout (face-flux
+    # ``docs/Handoff_Cylinder.md`` §3a).  The solid mask used throughout (face-flux
     # masking, velocity clamp, IBM ghost detection) becomes the volume-fraction
     # ``is_solid`` (vf == 0) so centre-inside *cut* cells (vf > 0) are treated as
     # fluid, not clamped.  The operator is non-symmetric (row-sum still zero, so

@@ -8,9 +8,16 @@ venv/
 env/
 .env
 
-# --- CFD simulator generated outputs (PNG/CSV/Tecplot/HDF5/MP4/GIF, run logs) ---
-CFDPY/outputs/
-**/outputs/
+# --- CFD simulator generated outputs (PNG/CSV/Tecplot/HDF5, run logs) ---
+# Ignore the regenerable frame dumps written at runtime, but keep the
+# rendered animation deliverables that are force-added as published
+# artifacts: .mp4 under CFDPYGPU/outputs/ and .wmv under CFDPY/outputs/.
+# (Tracked files bypass .gitignore regardless; these negations document
+# intent and keep the deliverables out of the "ignored" set for newcomers.)
+**/outputs/**
+!**/outputs/
+!**/outputs/**/*.mp4
+!**/outputs/**/*.wmv
 
 # --- Scratch / transient debug files ---
 _vel_check.json
@@ -18,8 +25,9 @@ _vel_out.txt
 *_run.log
 *_run_ext.log
 
-# --- Editors / OS ---
+# --- Editors / OS / local tooling ---
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+.claude/

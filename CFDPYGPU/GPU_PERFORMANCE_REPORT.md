@@ -14,7 +14,7 @@
 
 ## 1. Profiling methodology
 
-`profile_hotspots.py` drives the real `Simulation` under `cProfile` with **all
+`tools/profile_hotspots.py` drives the real `Simulation` under `cProfile` with **all
 I/O disabled** (`save_csv/hdf5/tecplot/png/mp4 = False`, `verbose = False`) so
 only numerical work is measured. Three warm-up steps run before the profiler is
 armed, so JIT compilation, lazy matrix builds and cache fills are excluded. The
@@ -287,8 +287,8 @@ For Increment B (GPU BiCGSTAB), the six required artifacts:
 
 ```bash
 # Profile (the §2 hotspot rankings)
-python profile_hotspots.py examples/cylinder_flow/config.json 30
-python profile_hotspots.py examples/dam_break_2D/config.json 20
+python tools/profile_hotspots.py examples/cylinder_flow/config.json 30
+python tools/profile_hotspots.py examples/dam_break_2D/config.json 20
 
 # Validate + benchmark the GPU kernels (§4.1)
 python -m gpu.validate_kernels

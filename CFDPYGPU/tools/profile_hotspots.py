@@ -2,20 +2,26 @@
 
 Loads a case config, disables every I/O / plotting back-end so only the
 numerical work is measured, runs a fixed number of time steps under cProfile,
-and prints the cumulative-time ranking.  Run as::
+and prints the cumulative-time ranking.  Run from the CFDPYGPU root::
 
-    python profile_hotspots.py examples/natural_convection_2D/config.json 40
+    python tools/profile_hotspots.py examples/natural_convection_2D/config.json 40
+
+The case path is relative to the current directory, so run it from the
+CFDPYGPU root.
 """
 from __future__ import annotations
 
 import cProfile
+import os
 import pstats
 import sys
 import time
 
 import numpy as np
 
-sys.path.insert(0, ".")
+# Put the package root (this file's parent dir) on sys.path so the
+# ``config``/``main`` package imports resolve regardless of cwd.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import load_config
 from main import Simulation
