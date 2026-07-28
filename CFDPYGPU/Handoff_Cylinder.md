@@ -79,7 +79,7 @@ compliance / generality but is not what makes the forces correct.
 ## 2. Files changed
 - **New:** `solver/forces.py`, `examples/cylinder_flow/config.json`,
   `examples/cylinder_flow/run_reynolds.py`, `examples/cylinder_flow/benchmarks.py`,
-  `Handoff_cylinder.md`.
+  `Handoff_Cylinder.md`.
 - **Modified:** `config/config_loader.py` (obstacle schema + cylinder/sphere),
   `main.py` (cylinder mask, `compute_forces` wiring, vorticity + force-history
   rendering), `solver/pressure.py` (`_rhie_chow`, pressure-outlet Dirichlet),

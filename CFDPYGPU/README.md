@@ -1,16 +1,30 @@
 # CFDPyGPU — a modular Finite-Volume CFD framework in Python
 
 CFDPyGPU is an **educational and professional** Computational Fluid Dynamics
-framework written from scratch in Python 3.12+ (no OpenFOAM, FEniCS or FiPy).
+framework written from scratch in Python 3.11+ (no OpenFOAM, FEniCS or FiPy).
 It solves the incompressible Navier–Stokes equations together with energy,
 scalar transport and Volume-of-Fluid (VOF) free-surface models on a Cartesian
 structured mesh, using the **Finite Volume Method** with a **projection
 (fractional-step)** pressure-velocity coupling.
 
+CFDPyGPU is the **GPU-accelerated superset** of [CFDPy](../CFDPY/README.md).
+It reproduces the CPU framework (`mesh/`, `numerics/`, `physics/` and
+`visualization/` are identical) and layers three things on top:
+
+* a dedicated **[`gpu/`](#gpu-acceleration) package** that ports the
+  performance-critical kernels to NVIDIA CUDA through Numba, with an automatic,
+  numerics-identical fallback to the CPU path when no GPU is present;
+* **force integration and immersed-boundary work** (`solver/forces.py`,
+  `solver/ibm.py`, `solver/cut_cell.py`) developed for the cylinder benchmark;
+* a fifth example, **[flow past a circular cylinder](#example-5--flow-past-a-circular-cylinder)**,
+  with a Reynolds-sweep driver and a literature comparison table.
+
+The same JSON case files run on either variant with no change.
+
 The code is organised as a small, decoupled package where every subsystem
 (mesh, numerics, physics, solvers, visualisation) can be read and modified in
 isolation.  It is designed as a research base: the architecture is ready for
-unstructured meshes, RANS/LES/DNS, GPU/CUDA, MPI, AMR, additional multiphase /
+unstructured meshes, RANS/LES/DNS, MPI, AMR, additional multiphase /
 compressible / radiation / phase-change / species models.
 
 ---
@@ -20,12 +34,14 @@ compressible / radiation / phase-change / species models.
 1. [Features](#features)
 2. [Installation](#installation)
 3. [Quick start — running the examples](#quick-start--running-the-examples)
-4. [How to change parameters](#how-to-change-parameters)
-5. [How to create a new case](#how-to-create-a-new-case)
-6. [Mathematical formulation](#mathematical-formulation)
-7. [Algorithms and solver flowchart](#algorithms-and-solver-flowchart)
-8. [Project organization](#project-organization)
-9. [Extending the framework](#extending-the-framework)
+4. [GPU acceleration](#gpu-acceleration)
+5. [How to change parameters](#how-to-change-parameters)
+6. [How to create a new case](#how-to-create-a-new-case)
+7. [Mathematical formulation](#mathematical-formulation)
+8. [Algorithms and solver flowchart](#algorithms-and-solver-flowchart)
+9. [Project organization](#project-organization)
+10. [Extending the framework](#extending-the-framework)
+11. [License](#license)
 
 ---
 
@@ -74,6 +90,25 @@ compressible / radiation / phase-change / species models.
   pure-NumPy fallback when Numba is absent.  The rest of the heavy numerics are
   already vectorised NumPy, leaving further `@njit`/`@cuda.jit` targets cleanly
   isolated (see [Extending](#extending-the-framework)).
+- **NVIDIA CUDA acceleration** — the [`gpu/`](#gpu-acceleration) package:
+  hardware detection with a startup report, a NumPy/CUDA array backend with a
+  device memory pool, `@cuda.jit` sparse-CSR matvec and BLAS-1 reduction
+  kernels, and a GPU-resident preconditioned BiCGSTAB.  Gated by a single
+  `use_gpu` case-file flag and **self-disabling**: a machine without a
+  CUDA-capable GPU silently runs the original CPU path with identical numerics
+  and pays no GPU import cost.
+- **Force integration** — `solver/forces.py` integrates pressure + viscous
+  traction over an immersed body to give `Cd`, `Cl` and the surface `Cp` / `Cf`
+  distributions, plus recirculation length and separation angle
+  (`"compute_forces": true`).
+- **Rhie–Chow momentum interpolation** (`"rhie_chow": true`) to suppress
+  collocated pressure checkerboarding, and a pressure-outlet Dirichlet path.
+- **Curved-boundary immersed methods (experimental)** — a mirror-point
+  ghost-cell IBM (`solver/ibm.py`, `"immersed_method": "ibm"`) and a cut-cell
+  geometry kernel (`solver/cut_cell.py`, `"ibm_cut_cell"`, currently dormant).
+  Their validation status is documented honestly in
+  [`Handoff_Cylinder.md`](Handoff_Cylinder.md) — see the
+  [staircase caveat](#example-5--flow-past-a-circular-cylinder).
 
 ---
 
@@ -87,7 +122,7 @@ compressible / radiation / phase-change / species models.
 ### Dependencies
 
 Only the libraries listed in the project specification are used (pinned in
-[`requirements.txt`](#requirements)):
+[`requirements.txt`](requirements.txt)):
 
 | Library       | Purpose                                  | Required? |
 |---------------|------------------------------------------|-----------|
@@ -96,7 +131,7 @@ Only the libraries listed in the project specification are used (pinned in
 | matplotlib    | PNG plots, MP4/GIF animations            | yes       |
 | tqdm          | progress bar                             | optional  |
 | h5py          | HDF5 output                              | optional* |
-| numba         | JIT-accelerated TVD limiter (with fallback) | optional |
+| numba         | `@njit` TVD limiter (with fallback) **and** the `@cuda.jit` GPU kernels | optional† |
 | meshio        | mesh I/O (future unstructured meshes)    | optional  |
 | pyvista       | optional 3D viewer (not used by default) | optional  |
 | PyYAML        | YAML case files (JSON always works)      | optional  |
@@ -105,7 +140,12 @@ Only the libraries listed in the project specification are used (pinned in
 produces CSV / Tecplot / PNG / MP4.  Likewise, the TVD limiter falls back to a
 pure-NumPy implementation if `numba` is missing.
 
-Install the runtime stack (recommended, from the project root):
+† Numba is the **only** additional dependency the GPU path needs — there is no
+CuPy, no CUDA Python bindings and no compiled extension module.  See
+[GPU acceleration](#gpu-acceleration) for the hardware and driver requirements.
+
+Install the runtime stack (recommended, from the `CFDPYGPU/` directory —
+there is no requirements file at the repository root):
 
 ```bash
 pip install -r requirements.txt          # core + recommended extras
@@ -125,15 +165,15 @@ a pillow-written **GIF**.
 
 ### No build step
 
-CFDPyGPU is pure Python — just clone/copy the directory and run `main.py` from the
-project root so that the package imports (`config`, `mesh`, `numerics`, …)
+CFDPyGPU is pure Python — just clone the repository and run `main.py` from the
+`CFDPYGPU/` directory, so that the package imports (`config`, `mesh`, `numerics`, …)
 resolve.
 
 ---
 
 ## Quick start — running the examples
 
-From the project root:
+From the `CFDPYGPU/` directory:
 
 ```bash
 python main.py examples/natural_convection_2D/config.json
@@ -143,8 +183,17 @@ python main.py examples/liquid_drop_splash_2D/config.json
 python main.py examples/cylinder_flow/config.json
 ```
 
-Each run prints a header, a progress bar, and writes all configured outputs to
-the case's `output_dir` (`outputs/<name>/` by default).
+Each run prints a *CFDPy Hardware Report* naming the execution device, then a
+header, a progress bar, and writes all configured outputs to the case's
+`output_dir` (`outputs/<name>/` by default).
+
+> ⚠️ **Fresh clone: clear the splash case's `restart` key first.**
+> `examples/liquid_drop_splash_2D/config.json` ships with
+> `"restart": "outputs/liquid_drop_splash_2D/frame_001242.h5"`, the checkpoint from which the
+> case was extended from 1.2 s to 4.0 s.  Runtime frames are not tracked in git, so on a fresh
+> clone that file does not exist and the run aborts when it tries to open it.  Set
+> `"restart": ""` for a from-scratch run (see
+> [Restart / checkpoint resume](#restart--checkpoint-resume)).
 
 ### Example 1 — Natural convection in a square cavity
 
@@ -364,19 +413,179 @@ St, Lr, % vs benchmark, quality assessment).
 > recirculation length `Lr/D ≈ 0.85` vs the literature `2.20` shows the *wake
 > field* itself is qualitatively wrong.  The force formula is correct (the
 > transient and the pressure/viscous split are physically sensible); the
-> discrepancy is the discrete body, not the force integration.  A
-> curved-boundary **IBM** forcing (wall at the true immersed distance, linearly
-> extrapolated ghost velocity, forces integrated on the true surface) is
-> **required** to validate this benchmark — the staircase harness is kept as
-> the driver, but treat the cylinder example as a demonstration of the
-> staircase limitation, not a literature match, until IBM lands.  The reported
-> `div` is the collocated face-averaged divergence residual, not a
-> mass-conservation diagnostic.
+> discrepancy is the discrete body, not the force integration.  Treat this
+> example as a demonstration of the staircase limitation, not as a literature
+> match.  The reported `div` is the collocated face-averaged divergence
+> residual, not a mass-conservation diagnostic.
+
+**Where the curved-boundary work stands.**  Two attempts at replacing the
+staircase have been made and are documented in full in
+[`Handoff_Cylinder.md`](Handoff_Cylinder.md) §3a and §6:
+
+| Mesh | Method | Cd (steady) | Cl | Lr/D | vs literature (Cd 1.52 / Lr 2.20) |
+|---|---|---|---|---|---|
+| 200×80 | staircase | 3.71 | −0.61 | 0.85 | Cd +144 %, Lr −61 % |
+| 200×80 | **ghost-cell IBM** | **3.19** | −0.57 | **0.91** | Cd +110 %, Lr −59 % |
+
+* **Mirror-point ghost-cell IBM has landed** (`solver/ibm.py`, opt-in via
+  `"immersed_method": "ibm"`, already set in the cylinder config).  It runs
+  stably but moves Cd only 14 %, because it enforces the *tangential* no-slip at
+  the true wall while **no-penetration is still imposed on the staircase faces**
+  by `BoundaryCondition.mask_solid_faces` — and for a bluff body it is the
+  no-penetration geometry, not the wall tangential velocity, that sets
+  separation.
+* **A cut-cell attempt was stopped** and left behind `"ibm_cut_cell": false`.
+  The geometry kernel (`solver/cut_cell.py`) is verified — solid area recovers
+  *πr²* to 1.8e-5 / 7.7e-6 / 6.3e-6 at 200×80 / 400×160 / 800×320 with exact
+  mirror symmetry — and the aperture-only Poisson plus flux-form face correction
+  drives the cut-cell divergence to ~1.6e-14.  The wall is *collocated velocity
+  recovery*: no way of turning the corrected face fluxes back into cell-centred
+  velocities is simultaneously stable, non-smoothing and consistent with the
+  cut-cell divergence.  A stable+accurate cut-cell needs face fluxes carried as
+  primary state (staggered-like) — deferred by decision.
+* **Centre snapping is kept ON** (`"snap_obstacle_to_grid": true`): it snaps the
+  cylinder centre to the nearest grid line, removing the spurious steady lift
+  caused by a lopsided staircase.  It is independent of the cut-cell flag and is
+  a standalone improvement.
+
+**Do not launch `--full` or the Re=100 case without an explicit reason** — both
+reproduce the corner-pinned wake at high cost (Re=40 at 400×160 already takes
+~2 h 26 min).  `run_reynolds.py` is kept as the harness ready to drive a future
+wall-flux IBM.
 
 Outputs: pressure / velocity / vorticity PNGs, `*_vorticity.mp4` +
 `*_velocity.mp4` animations, the `Cd(t)` / `Cl(t)` / Cl-FFT force-history
 plots, Tecplot `.dat` frames, HDF5 snapshots, and `history.csv` (with `Cd`,
 `Cl`, `div`, `dt`, CFL columns) per case in `outputs/cylinder_Re<N>_<mesh>/`.
+
+---
+
+## GPU acceleration
+
+This is what distinguishes CFDPyGPU from [CFDPy](../CFDPY/README.md).  The
+measured profiling and benchmark numbers behind every claim below live in
+[`GPU_PERFORMANCE_REPORT.md`](GPU_PERFORMANCE_REPORT.md).
+
+### Opt-in and self-disabling
+
+A single **`use_gpu`** flag in the case file (default `true`) gates the GPU
+path.  At startup the framework probes the hardware and prints a *CFDPy
+Hardware Report*.  When a CUDA-capable NVIDIA GPU is present the device is
+used; when it is not — or when `"use_gpu": false` — the framework falls back to
+the original pure-NumPy/SciPy code path with **identical numerics**.  A
+CPU-only machine pays no GPU import cost: the CUDA backend and kernels are
+imported lazily, only when a GPU is actually in use.
+
+```json
+{ "...": "...", "use_gpu": false }      // force the CPU path for validation
+```
+
+```bash
+python -c "from gpu import print_hardware_report; print_hardware_report()"
+```
+
+### The layered `gpu/` package
+
+The CPU/GPU choice is made in one place so the surrounding solver code stays
+device-agnostic.  Each layer depends only on the one below it.
+
+| Module | Responsibility |
+|---|---|
+| `gpu/hardware.py` | The single source of truth for *"is there a usable NVIDIA GPU?"*.  Probes device attributes (name, compute capability, SM count, memory, warp size) and queries CUDA driver/runtime versions through the bundled `cudart64` DLL when locatable.  Side-effect free — it only *reads* attributes, never allocating device memory or creating a context that would disturb a later run. |
+| `gpu/backend.py` | An array/device backend with two implementations of one interface: `NumPyBackend` (the CPU path and the fallback) and `CUDABackend` (Numba-CUDA device arrays in Numba's per-context memory pool, so repeated `zeros`/`empty` of the same shape reuse cached allocations instead of round-tripping through `cudaMalloc`/`cudaFree`).  `get_backend()` returns the CUDA backend when `use_gpu` is true *and* a GPU was detected; the result is cached process-wide. |
+| `gpu/kernels.py` | Low-level `@cuda.jit` kernels: a sparse CSR matvec (`matvec_csr`, one thread per row, grid-stride, race-free without atomics) and the BLAS-1 primitives a Krylov driver needs (`dot`, `dot2`, `max_abs`, `norm2`, and the in-place `copy` / `axpy` / `scale_add` / `fill` / `div_pointwise`).  The two-level shared-memory tree reduction (`BLOCK = 256`) writes one partial per block — no float atomics, so results are deterministic — and reduces the partials on the device, so only **one float crosses device→host per reduction**.  `dot2` fuses two dot products into a single host sync, which is exactly what the BiCGSTAB *ω*-step needs. |
+| `gpu/linear.py` | `GPUBiCGSTAB` — a GPU-resident preconditioned BiCGSTAB (van der Vorst) with an optional **Jacobi (diagonal) preconditioner**, the only preconditioner that is cheap on a GPU (a pointwise divide) and free of the sequential triangular solves that make ILU awkward on a device.  Workspace is allocated once per solver instance and reused; the inverse diagonal is cached per matrix identity.  Convergence is tested on the cheap recurrence residual but **verified with the true residual** `b − A x` on exit, to catch the BiCGSTAB phantom-convergence stop, and the residual norm is only evaluated every 4 iterations (`check_every = 4`) to cut sync overhead. |
+
+### Validation
+
+Two standalone harnesses check the GPU work against the CPU reference:
+
+```bash
+python -m gpu.validate_kernels     # every kernel vs its NumPy reference
+python -m gpu.validate_linear      # GPU BiCGSTAB vs CPU on the real operator
+```
+
+`validate_kernels` confirms the matvec is **exact** and the reductions agree to
+~1e-15 relative.  `validate_linear` solves the **real production
+pressure-Poisson operator** built by `PressureSolver._matrix` (pure-Neumann,
+mean-projected RHS, mean-subtracted solution) and finds the GPU solution
+agreeing with the CPU one to L2 ~1e-6 / rel∞ ~1e-7 — within the solver
+tolerance amplified by the condition number, as expected of two iterative
+solvers stopping on a relative residual.
+
+### Hardware and driver requirements
+
+- An **NVIDIA CUDA-capable GPU** (any compute capability the installed Numba
+  build supports; developed and benchmarked on a GeForce RTX 4050 Laptop GPU,
+  compute capability 8.9, 6 GB).
+- The **NVIDIA CUDA driver** installed on the system.  The runtime comes either
+  from a system CUDA Toolkit or, more conveniently, from the `nvidia-*` pip
+  wheels, which ship `cudart64` and are auto-discovered by `gpu/hardware.py`:
+
+  ```bash
+  pip install nvidia-cuda-runtime-cu12   # optional; only for the version report
+  ```
+
+- **Numba ≥ 0.58 built with CUDA support** (`numba.cuda`) — already in
+  [`requirements.txt`](requirements.txt).  There is **no** dependence on CuPy,
+  on CUDA Python, or on a hand-written extension module, and **no build step**.
+
+Non-NVIDIA GPUs (AMD ROCm, Intel oneAPI, Apple Metal) are **not** supported by
+this path; those machines fall back to the CPU implementation automatically.
+
+### Parallel execution strategy
+
+- **One thread per row / per cell**, with grid-stride loops so a single launch
+  covers any problem size.  The sparse matvec assigns each row to exactly one
+  thread (race-free accumulation, no atomics); the reductions use a 256-thread
+  block so the shared-memory tree reduction is exact.
+- **No inter-block coupling**, so the 2-D stencil operators slated for the
+  roadmap map to natural 2-D CUDA grids with shared-memory halos and need no
+  host↔device transfer during a cycle.
+- **Fields stay resident**: the device memory pool and the per-solver workspace
+  cache keep allocations alive across steps, eliminating repeated
+  `cudaMalloc`/`cudaFree` and the per-solve copies that would otherwise
+  dominate at small *N*.
+- **Multi-GPU / MPI extension point**: the backend carries a `device_index` and
+  activates its context on first use, so a future domain-decomposition path can
+  call `init_backend(device_index=local_rank)` once per MPI rank — one rank, one
+  GPU — with no change to the rank-local kernels.
+
+### Status — honest benchmark result
+
+> **The GPU kernels are validated but deliberately NOT yet wired into the
+> production `PressureSolver`.**
+
+The profiling in [`GPU_PERFORMANCE_REPORT.md`](GPU_PERFORMANCE_REPORT.md) shows
+the bottleneck *shifts* between regimes: in single-phase runs the ILU
+factorisation is 91.5 % of the step, while in VOF / adaptive-Δt runs the
+matrix changes every step, ILU is useless, and ~2000 BiCGSTAB matvecs per step
+are 97.7 % of the cost.  Measured on the real Poisson operator:
+
+| Grid | N | CPU + ILU | CPU no-ILU | GPU | vs CPU+ILU | vs CPU no-ILU |
+|------|---|-----------|------------|-----|------------|---------------|
+| 60×60   | 3 600  | 2.95 ms   | 4.78 ms   | 113.4 ms | 0.03× | 0.04× |
+| 200×160 | 32 000 | 48.7 ms   | 254.6 ms  | 272.4 ms | 0.18× | 0.93× |
+| 400×160 | 64 000 | 108.7 ms  | 567.3 ms  | 437.8 ms | 0.25× | **1.30×** |
+
+The GPU wins in the VOF regime at production size and the advantage grows with
+*N*, but ILU is a far stronger preconditioner than Jacobi, so CPU+ILU still
+wins for single-phase.  Per the incremental methodology — *profile → implement →
+validate → benchmark → promote only on success* — an increment that would
+regress the production solver is not promoted.  The
+[GPU geometric-multigrid preconditioner](GPU_PERFORMANCE_REPORT.md#5-incremental-gpu-roadmap)
+is the next step and the one that makes both regimes net wins.
+
+### Profiling
+
+```bash
+python profile_hotspots.py examples/cylinder_flow/config.json 30
+python profile_hotspots.py examples/dam_break_2D/config.json 20
+```
+
+`profile_hotspots.py` drives the real `Simulation` under `cProfile` with all
+I/O disabled and three warm-up steps, so only numerical work is measured and
+JIT compilation / lazy matrix builds are excluded.
 
 ---
 
@@ -459,6 +668,16 @@ The most useful knobs:
   overlay in `finalize()` — set this for VOF splash / dam-break cases, where
   `streamplot` would otherwise stall (see
   [Velocity animation & the streamline hang](#velocity-animation--the-streamline-hang)).
+- **Immersed-boundary method**: `"immersed_method"` selects `"staircase"`
+  (default, cell-mask direct forcing) or `"ibm"` (mirror-point ghost-cell
+  forcing at the true curved wall).  `"snap_obstacle_to_grid": true` snaps an
+  obstacle centre to the nearest grid line, removing the spurious lift a
+  lopsided staircase produces.  `"ibm_cut_cell"` gates the dormant cut-cell
+  path and should be left `false` (see the
+  [staircase caveat](#example-5--flow-past-a-circular-cylinder)).
+- **GPU**: `"use_gpu"` (default `true`) enables the CUDA path when a
+  CUDA-capable NVIDIA GPU is detected; set it to `false` to force the CPU path
+  with identical numerics.  See [GPU acceleration](#gpu-acceleration).
 - **Output**: `output_interval` (in simulation time), and the `save_*`
   booleans.  `output_dir` controls where everything lands.
 
@@ -657,10 +876,22 @@ ProjectionMethod.step(u, v, w, p, dt, sources, rho):
 ## Project organization
 
 ```
-CFDPyGPU/
+CFDPYGPU/
 ├── main.py                  # CLI entry point + Simulation orchestrator
+├── requirements.txt         # pinned Python dependencies
+├── profile_hotspots.py      # cProfile per-step hotspot driver (I/O disabled)
+├── verify_cut_cell_pressure.py  # algebraic regression checks for the cut-cell Poisson
+├── gpu/                     # the GPU acceleration package (layered)
+│   ├── hardware.py          #   detection + startup hardware report (no state)
+│   ├── backend.py           #   NumPy / CUDA array backend, memory pool, CPU fallback
+│   ├── kernels.py           #   @cuda.jit sparse CSR matvec + BLAS-1 reductions
+│   ├── linear.py            #   GPUBiCGSTAB: GPU-resident preconditioned Krylov solve
+│   ├── validate_kernels.py  #   CPU-vs-GPU kernel validation + microbenchmarks
+│   └── validate_linear.py   #   GPU BiCGSTAB vs CPU on the real Poisson operator
 ├── config/
 │   └── config_loader.py     # Config dataclass, BoundarySpec, JSON/YAML loader
+│                            #   (+ use_gpu, rhie_chow, compute_forces,
+│                            #    immersed_method, snap_obstacle_to_grid, ibm_cut_cell)
 ├── mesh/
 │   └── mesh.py              # Cartesian structured mesh (2D/3D), cell/face geometry
 ├── numerics/                # pure finite-volume operators (no state)
@@ -676,13 +907,18 @@ CFDPyGPU/
 │   ├── gravity.py           #   Gravity body force
 │   └── buoyancy.py          #   Boussinesq buoyancy acceleration
 ├── solver/
-│   ├── boundary.py          #   BoundaryCondition: patches, laplacian builders
+│   ├── boundary.py          #   BoundaryCondition: patches, laplacian builders,
+│   │                        #     solid-face masking, apply_immersion dispatch
 │   ├── linear_solver.py     #   CG / BiCGSTAB / GMRES + ILU(0)
 │   ├── momentum.py          #   semi-implicit NS predictor
-│   ├── pressure.py          #   incremental variable-coeff Poisson
+│   ├── pressure.py          #   incremental variable-coeff Poisson,
+│   │                        #     Rhie–Chow, pressure-outlet Dirichlet, cut-cell branch
 │   ├── projection.py        #   ProjectionMethod (predict → solve → correct)
 │   ├── energy.py            #   advection–diffusion for T
-│   └── vof.py               #   conservative VOF transport, properties, interface
+│   ├── vof.py               #   conservative VOF transport, properties, interface
+│   ├── forces.py            #   ForcesCalculator: Cd / Cl / Cp / Cf, Lr, separation angle
+│   ├── ibm.py               #   mirror-point ghost-cell immersed boundary (opt-in)
+│   └── cut_cell.py          #   cut-cell volume/aperture geometry (dormant, flag OFF)
 ├── visualization/
 │   ├── matplotlib_view.py   #   MatplotlibViewer: PNG + MP4/GIF
 │   ├── tecplot_writer.py    #   TecplotExporter: .dat (py2tec dialect) / .csv / .h5
@@ -692,14 +928,17 @@ CFDPyGPU/
 │   ├── dam_break_2D/config.json
 │   ├── backward_facing_step/config.json
 │   ├── liquid_drop_splash_2D/config.json
-│   └── cylinder_flow/        #   Re sweep + mesh study + report (config.json,
-│       ├── config.json       #     run_reynolds.py, benchmarks.py)
-│       ├── run_reynolds.py
-│       └── benchmarks.py
-├── outputs/                 # created at runtime, one folder per case
+│   └── cylinder_flow/       #   Re sweep + mesh study + report
+│       ├── config.json
+│       ├── run_reynolds.py  #     sweep driver; writes cylinder_report.md
+│       ├── benchmarks.py    #     literature comparison table + signed-% diff
+│       └── _probe.py        #     ad-hoc Cd/Cl trajectory probe (edit-and-run)
+├── outputs/                 # created at runtime, one folder per case;
+│                            #   only the rendered .mp4/.wmv animations are tracked
 ├── README.md                #   this file
+├── GPU_PERFORMANCE_REPORT.md #  profiling, CPU-vs-GPU benchmarks, GPU roadmap
 ├── Handoff.md               #   notes on the splash example, restart & Tecplot work
-└── Handoff_cylinder.md      #   notes on the cylinder benchmark & staircase caveat
+└── Handoff_Cylinder.md      #   cylinder benchmark: staircase, IBM and cut-cell status
 ```
 
 ### Design principles
@@ -731,11 +970,14 @@ The architecture deliberately leaves clean extension points:
   face-cell connectivity (via `meshio`) localises the change.
 - **RANS / LES / DNS**: subgrid / turbulence closures plug into
   `MomentumSolver` as additional source terms and effective viscosities.
-- **GPU / CUDA**: the heavy numeric kernels (`interpolation`, `divergence`,
-  `gradients`, the matrix assembly) are pure NumPy vectorised loops — wrap
-  them with `@numba.njit` (or `@cuda.jit`) with no refactor.  The
-  `LinearSolver` can be swapped for a GPU Krylov solver behind the same
-  `.solve(A, b)` interface.
+- **GPU / CUDA**: partially delivered — see [GPU acceleration](#gpu-acceleration).
+  The device backend, the `@cuda.jit` kernels and `GPUBiCGSTAB` are implemented
+  and validated; the remaining work is the multigrid preconditioner, wiring the
+  GPU solve into `PressureSolver`, keeping fields device-resident, and porting
+  the stencil operators (`interpolation`, `divergence`, `gradients`), which are
+  pure NumPy vectorised loops that map to 2-D CUDA grids with no refactor.  The
+  roadmap with expected impact per step is in
+  [`GPU_PERFORMANCE_REPORT.md`](GPU_PERFORMANCE_REPORT.md) §5.
 - **MPI**: domain decomposition enters at the `Mesh` / `LinearSolver` level;
   the field arrays and the projection step already operate on local arrays.
 - **AMR**: the `Mesh` is a value object; a hierarchy of meshes can be
@@ -748,4 +990,28 @@ The architecture deliberately leaves clean extension points:
 
 ## License
 
-Educational / research use.  See the source headers for attribution.
+Licensed under **Creative Commons Attribution-NonCommercial 4.0 International
+(CC BY-NC 4.0)**, together with the rest of the repository.  The full legal
+text is in [`LICENSE`](../LICENSE) at the repository root.
+
+You are free to share and adapt this framework for any **non-commercial**
+purpose, provided you give appropriate credit and indicate any changes made.
+Commercial use requires a separate licence from the maintainer.  If you use
+CFDPyGPU in teaching, research or a publication, please cite it as described in
+the root [README](../README.md#citation).
+
+---
+
+## See also
+
+- [`../README.md`](../README.md) — the book companion README: chapter
+  programs, repository structure, installation, limitations and roadmap.
+- [`../CFDPY/README.md`](../CFDPY/README.md) — the CPU framework this package
+  is a superset of.
+- [`GPU_PERFORMANCE_REPORT.md`](GPU_PERFORMANCE_REPORT.md) — profiling
+  methodology, hotspot rankings, CPU-vs-GPU benchmarks and the GPU roadmap.
+- [`Handoff.md`](Handoff.md) — the liquid-drop splash example, the
+  restart/resume path and the Tecplot dialect migration.
+- [`Handoff_Cylinder.md`](Handoff_Cylinder.md) — the cylinder benchmark: force
+  integration, Rhie–Chow coupling, the staircase failure analysis, the
+  ghost-cell IBM result and the halted cut-cell attempt.

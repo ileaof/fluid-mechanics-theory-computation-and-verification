@@ -23,6 +23,9 @@
 ## Table of Contents
 
 - [Introduction](#introduction)
+  - [Scientific motivation](#scientific-motivation)
+- [Quick Start](#quick-start)
+- [Main Capabilities](#main-capabilities)
 - [Book Organization](#book-organization)
   - [Chapter 1 — Foundations of the Finite Volume Method: Plane Couette–Poiseuille Flow](#chapter-1--foundations-of-the-finite-volume-method-plane-couettepoiseuille-flow)
   - [Chapter 2 — Fluid Statics and the Hydrostatic Balance](#chapter-2--fluid-statics-and-the-hydrostatic-balance)
@@ -42,9 +45,19 @@
 - [GPU-Accelerated Simulator — CFDPyGPU](#gpu-accelerated-simulator--cfdpygpu)
 - [Repository Structure](#repository-structure)
 - [Installation](#installation)
+- [Output Formats](#output-formats)
+- [Rendered Animations Shipped with the Repository](#rendered-animations-shipped-with-the-repository)
+- [Current Capabilities and Limitations](#current-capabilities-and-limitations)
+- [Roadmap](#roadmap)
 - [Computational Philosophy](#computational-philosophy)
 - [Intended Audience](#intended-audience)
 - [References](#references)
+  - [Citation](#citation)
+  - [BibTeX](#bibtex)
+  - [License](#license)
+  - [Contributing](#contributing)
+  - [Acknowledgments](#acknowledgments)
+  - [Author and Contact](#author-and-contact)
 
 ---
 
@@ -79,7 +92,90 @@ answer at the design rate of accuracy. The Method of Manufactured Solutions, Ric
 extrapolation, and the Grid Convergence Index are used throughout — not as optional extras, but
 as the ordinary working tools of the computational fluid dynamicist. Reproducibility is enforced
 by construction: every program is deterministic (no random numbers), depends only on the standard
-scientific Python stack, and writes its figures and convergence tables to disk.
+scientific Python stack, prints its convergence tables to the console, and writes its figure to
+disk.
+
+### Scientific motivation
+
+Fluid mechanics is usually taught as two disconnected subjects: an analytical course in which
+closed-form solutions are derived for a handful of idealised flows, and a computational course in
+which a commercial or open-source solver is driven as a black box. The gap between them is where
+most practical errors live. A student who can derive the Blasius profile but cannot tell whether a
+solver has converged to it, and a practitioner who can mesh a geometry but cannot distinguish a
+discretisation error from a modelling error, are both missing the essential skill of the field:
+**knowing when a number can be trusted**.
+
+This repository is built on three convictions.
+
+1. **Theory and computation must be developed together.** Every governing equation in the book is
+   discretised, implemented, and run in the same chapter in which it is derived, so the reader
+   sees the continuous equation, the discrete operator, and the numerical answer as one object
+   rather than three.
+
+2. **A numerical result without a verification study is an opinion.** Grid convergence, observed
+   order of accuracy, Richardson extrapolation, the Grid Convergence Index, and the Method of
+   Manufactured Solutions are applied to every scheme in the text — including a deliberately
+   planted coding bug in Chapter 12 that MMS catches and ordinary testing does not. This is the
+   practice codified by ASME V&V 20, and it is treated here as elementary rather than advanced.
+
+3. **A solver you cannot read is a solver you cannot verify.** The capstone simulator, CFDPy, is
+   written from scratch in readable Python rather than wrapped around an existing framework, so
+   every operator the book derives can be traced to the lines of code that implement it — and so
+   that the reader can extend it. The GPU variant, CFDPyGPU, applies the same principle to
+   hardware acceleration: each CUDA kernel is validated against the NumPy reference it replaces
+   and benchmarked honestly before it is promoted into the production path.
+
+---
+
+## Quick Start
+
+```bash
+# 1. Clone
+git clone https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification.git
+cd fluid-mechanics-theory-computation-and-verification
+
+# 2. Install the scientific Python stack (Python 3.11+)
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r CFDPY/requirements.txt
+
+# 3. Run a chapter program — prints a verification table, writes a PNG
+python chapter01/ex1_2_fvm.py
+
+# 4. Run the CFD simulator on a bundled case (from inside CFDPY/)
+cd CFDPY
+python main.py examples/natural_convection_2D/config.json
+
+# 5. Or run the GPU-accelerated variant — it falls back to the CPU path with
+#    identical numerics when no NVIDIA GPU is present
+cd ../CFDPYGPU
+python main.py examples/natural_convection_2D/config.json
+```
+
+Chapter programs write their PNG figure into the **current working directory** and print their
+convergence tables to the console. Simulator runs write every configured output into the case's
+`output_dir` (`outputs/<name>/` by default). Full details in [Installation](#installation) and
+[Output Formats](#output-formats).
+
+---
+
+## Main Capabilities
+
+| Capability | Where | Notes |
+|---|---|---|
+| 39 standalone chapter programs (analytical / FVM / advanced) | `chapter01/`–`chapter13/` | NumPy + SciPy + Matplotlib only; deterministic; no build step |
+| Verification machinery — observed order, Richardson extrapolation, GCI, MMS | throughout, formalised in `chapter12/` | The methodological backbone of the book |
+| Classical benchmarks — Blasius, Ghia lid-driven cavity, de Vahl Davis, Sod shock tube, Ritter/Stoker dam break | `chapter08/`–`chapter13/` | Each verified against published reference data |
+| Incompressible Navier–Stokes on 2D/3D structured Cartesian meshes | [`CFDPY/`](CFDPY/README.md) | Collocated finite volumes, incremental (Chorin) projection |
+| Energy transport + Boussinesq natural convection | `CFDPY/solver/energy.py`, `CFDPY/physics/buoyancy.py` | Dirichlet / heat-flux / adiabatic walls |
+| Volume-of-Fluid free surfaces | `CFDPY/solver/vof.py` | Linear property blending, interface-normal reconstruction |
+| Selectable convection — upwind, central, QUICK, TVD (5 limiters) | `CFDPY/numerics/interpolation.py` | Numba-JIT limiter kernel with a pure-NumPy fallback |
+| Krylov linear solvers — CG / BiCGSTAB / GMRES + ILU(0) | `CFDPY/solver/linear_solver.py` | Factorisation cached across steps for fixed matrices |
+| Immersed obstacles (blocked cells, direct forcing) | `CFDPY/solver/boundary.py` | Boxes; cylinder/sphere primitives added in `CFDPYGPU/` |
+| Force integration (Cd / Cl / Cp / Cf) and Rhie–Chow coupling | `CFDPYGPU/solver/forces.py`, `CFDPYGPU/solver/pressure.py` | Cylinder benchmark harness — see [Limitations](#current-capabilities-and-limitations) |
+| Curved-boundary IBM and cut-cell geometry (experimental) | `CFDPYGPU/solver/ibm.py`, `CFDPYGPU/solver/cut_cell.py` | Opt-in flags; validation status documented honestly |
+| NVIDIA CUDA acceleration via Numba (`@cuda.jit`) with automatic CPU fallback | [`CFDPYGPU/gpu/`](CFDPYGPU/README.md) | Validated kernels + GPU-resident BiCGSTAB; not yet in the production solve |
+| Dual visualisation — Matplotlib (PNG, MP4/GIF) and Tecplot 360 ASCII | `CFDPY/visualization/` | Plus CSV history and HDF5 snapshots that double as restart checkpoints |
 
 ---
 
@@ -561,14 +657,20 @@ extends the methodology to a setting where no closed-form solution is available,
 reader to rely on verification alone. Together, the thirty-nine programs form a complete,
 self-contained finite-volume course in Python.
 
-All programs are deterministic (no random numbers), depend only on the standard scientific
-Python stack (NumPy, SciPy, Matplotlib), and write their figures and convergence tables to disk.
-They can be run individually:
+All programs are deterministic (no random numbers) and depend only on the standard scientific
+Python stack — **NumPy, SciPy and Matplotlib**. None of them requires Numba, h5py, tqdm or a GPU.
+Each program prints its verification and convergence tables to the console and saves a single PNG
+figure (`figN_M_<name>.png`) into the **current working directory**, using the non-interactive
+Matplotlib `Agg` backend so the scripts run headless. They can be run individually:
 
 ```bash
 python chapter05/ex5_2_fvm.py
 python chapter13/ex13_2_fvm.py
 ```
+
+> **Tip.** Because the figure is written to the working directory, `cd` into a scratch folder (or
+> into the chapter directory) first if you would rather not scatter PNGs at the repository root.
+> Generated `fig*.png` files are covered by [`.gitignore`](.gitignore).
 
 ---
 
@@ -627,14 +729,23 @@ multiphase/compressible/radiation/species models) are deliberately isolated.
 >
 > **➡️ [`CFDPY/README.md`](CFDPY/README.md)** — please refer there for full details.
 
-A quick way to run the four bundled examples:
+A quick way to run the four bundled examples — note the `cd`, which is required so that the
+package imports (`config`, `mesh`, `numerics`, …) resolve:
 
 ```bash
+cd CFDPY
 python main.py examples/natural_convection_2D/config.json
 python main.py examples/dam_break_2D/config.json
 python main.py examples/backward_facing_step/config.json
 python main.py examples/liquid_drop_splash_2D/config.json
 ```
+
+> ⚠️ **Before running the liquid-drop splash case on a fresh clone.** Its shipped `config.json`
+> sets `"restart": "outputs/liquid_drop_splash_2D/frame_001242.h5"` — the HDF5 checkpoint from
+> which the case was extended from 1.2 s to 4.0 s. Runtime output frames are *not* tracked in git,
+> so that file does not exist in a fresh clone and the run aborts when it tries to open it. Set
+> `"restart": ""` in the case file for a from-scratch run. The same applies to
+> [`CFDPYGPU/examples/liquid_drop_splash_2D/config.json`](CFDPYGPU/examples/liquid_drop_splash_2D/config.json).
 
 > 🖥️ **GPU variant.** A CUDA-accelerated port of CFDPy — **CFDPyGPU** — lives in
 > [`CFDPYGPU/`](CFDPYGPU/README.md) and is documented in the next section. It shares the same
@@ -739,7 +850,7 @@ The kernels follow a deliberately simple, structured-stencil-friendly model:
   `init_backend(device_index = local_rank)` once per MPI rank — one rank, one GPU — with no change
   to the rank-local kernels.
 
-### Dependencies
+### GPU dependencies
 
 | Component | Purpose | Required for GPU? |
 |---|---|---|
@@ -793,11 +904,38 @@ Print only the hardware report:
 python -c "from gpu import print_hardware_report; print_hardware_report()"
 ```
 
+### Additional solver modules in the GPU variant
+
+Beyond the `gpu/` package, `CFDPYGPU/` also carries three solver modules that the CPU variant does
+not have. They were developed for the cylinder benchmark and are documented in full in
+[`CFDPYGPU/Handoff_Cylinder.md`](CFDPYGPU/Handoff_Cylinder.md):
+
+- **`solver/forces.py`** — `ForcesCalculator`: integrates pressure and viscous traction over the
+  fluid/solid interface of an immersed body to give `Cd`, `Cl`, and the per-facet `Cp` / `Cf`
+  surface distributions, plus the recirculation length and separation angle. Enabled with
+  `"compute_forces": true`.
+- **`solver/ibm.py`** — `IBMForcing`: a mirror-point ghost-cell immersed-boundary treatment that
+  places the tangential no-slip at the *true* curved wall instead of at the staircase cell face
+  (Mittal et al. 2008; Uhlmann 2005). Opt-in via `"immersed_method": "ibm"`; staircase direct
+  forcing remains the default.
+- **`solver/cut_cell.py`** — `CutCellGeometry`: per-cell fluid volume fractions and per-face
+  aperture fractions for a curved body, computed by deterministic sub-cell sampling with
+  small-cell stabilisation. The geometry kernel is verified (solid area recovers *πr²* to ~1e-5
+  with exact mirror symmetry), but the aperture-weighted projection built on top of it is **not
+  enabled** — it sits behind `"ibm_cut_cell": false` pending a staggered-like rearchitecting of
+  the face-flux state.
+
+The GPU variant also adds **Rhie–Chow** momentum interpolation (`"rhie_chow": true`), a
+pressure-outlet Dirichlet path, obstacle centre snapping (`"snap_obstacle_to_grid"`), and
+cylinder/sphere obstacle primitives alongside the axis-aligned boxes of the CPU version.
+
 ### Relationship between the CPU and GPU versions
 
-CFDPyGPU is a **superset fork** of CFDPy: the CPU package is reproduced essentially verbatim and a
-new `gpu/` package is layered on top, so the two share the same governing equations, finite-volume
-operators, projection method, and JSON case format. The GPU path is being promoted incrementally
+CFDPyGPU is a **superset fork** of CFDPy: `mesh/`, `numerics/`, `physics/` and `visualization/`
+are identical to the CPU package; `config/`, `main.py` and four `solver/` modules carry the
+GPU-variant additions above; and the new `gpu/` package is layered on top. The two therefore share
+the same governing equations, finite-volume operators, projection method, and JSON case format.
+The GPU path is being promoted incrementally
 — profile, port one hotspot, validate against the CPU, benchmark, and only then wire it into the
 production solver. The GPU kernels and `GPUBiCGSTAB` are validated but, per this methodology, are
 **not yet wired into the production `PressureSolver`** until the planned geometric-multigrid
@@ -811,15 +949,16 @@ CPU-vs-GPU benchmark tables and the incremental GPU roadmap.
 ## Repository Structure
 
 The repository is organised into **per-chapter program directories** (`chapter01`–`chapter13`),
-each holding the three Python examples of that chapter, and the **`CFDPY/`** simulator package,
-which itself decomposes into `config`, `mesh`, `numerics`, `physics`, `solver`, `visualization`,
-`examples`, and `outputs`. The canonical top-level layout and the role of each part are
-described below.
+each holding the three Python examples of that chapter, and two simulator packages — **`CFDPY/`**
+(CPU) and **`CFDPYGPU/`** (GPU-accelerated superset) — each decomposing into `config`, `mesh`,
+`numerics`, `physics`, `solver`, `visualization`, `examples`, and `outputs`. The canonical
+top-level layout and the role of each part are described below.
 
 | Directory / file | Purpose |
 |---|---|
 | `chapter01/` … `chapter13/` | The **chapters** of the book, each with three runnable Python programs (`exN_1_analytical.py`, `exN_2_fvm.py`, `exN_3_advanced.py`). |
 | `CFDPY/` | The **complete CFD simulator** (the `cfd` core), with its own README, requirements, and example cases. |
+| `CFDPY/Handoff.md` | Developer handoff notes: the liquid-drop splash example, the HDF5 restart/resume path, and the Tecplot dialect migration. |
 | `CFDPY/examples/` | **Ready-to-run example cases** (natural convection, dam break, backward-facing step, liquid-drop splash), each with a `config.json`. |
 | `CFDPY/numerics/` | The **stateless finite-volume operators** (`src` of the simulator): interpolation, gradients, divergence, Laplacian, adaptive time step, Numba kernels. |
 | `CFDPY/solver/` | The **solver core**: boundary conditions, linear solvers, momentum, pressure, projection, energy, and VOF. |
@@ -830,24 +969,33 @@ described below.
 | `CFDPY/outputs/` | **Verification / output data** written at runtime: PNG, CSV, Tecplot `.dat`, HDF5 snapshots, MP4/GIF, and run logs. |
 | `CFDPYGPU/` | The **GPU-accelerated variant of CFDPy** (Numba-CUDA kernels + a GPU-resident BiCGSTAB, with automatic CPU fallback), mirroring the CPU package layout and adding a `gpu/` package. Has its own README, requirements, and example cases. |
 | `CFDPYGPU/gpu/` | The **GPU backend**: hardware detection, NumPy/CUDA array backend, `@cuda.jit` BLAS-1 + sparse-matvec kernels (`kernels.py`), and the GPU-resident preconditioned BiCGSTAB (`linear.py`). |
+| `CFDPYGPU/solver/` | The solver core **plus** the GPU-variant additions: `forces.py` (Cd/Cl integration), `ibm.py` (mirror-point ghost-cell IBM), and `cut_cell.py` (cut-cell geometry, currently dormant). |
 | `CFDPYGPU/examples/` | Ready-to-run GPU cases — natural convection, dam break, backward-facing step, liquid-drop splash, plus **cylinder flow** with a Reynolds-sweep / mesh-study driver and literature benchmark table. |
 | `CFDPYGPU/GPU_PERFORMANCE_REPORT.md` | The profiling, CPU-vs-GPU benchmark tables, and the incremental GPU roadmap. |
-| `docs/` | (Reserved) lecture notes, slides, and supplementary documentation for the book. |
-| `notebooks/` | (Reserved) Jupyter notebooks for interactive exploration of the analytical solutions and convergence studies. |
-| `tests/` | (Reserved) unit and regression tests for the finite-volume operators and the simulator. |
-| `tools/` | (Reserved) helper scripts for figure generation, post-processing, and batch verification runs. |
-| `verification/` | (Reserved) the consolidated grid-convergence, Richardson, and GCI campaigns collected from the chapter programs. |
+| `CFDPYGPU/Handoff.md` | Same splash / restart / Tecplot handoff notes as the CPU variant. |
+| `CFDPYGPU/Handoff_Cylinder.md` | Cylinder benchmark handoff: the force-integration and Rhie–Chow work, the staircase failure analysis, the ghost-cell IBM result, and the halted cut-cell attempt. |
+| `CFDPYGPU/profile_hotspots.py` | cProfile per-step hotspot driver (I/O disabled) — produces the rankings in the performance report. |
+| `CFDPYGPU/verify_cut_cell_pressure.py` | Algebraic regression checks for the cut-cell Poisson operator. |
+| `LICENSE` | Creative Commons Attribution-NonCommercial 4.0 International, full legal text. |
+| `.gitattributes` / `.gitignore` | Line-ending normalisation and binary-file marking; ignore rules for `__pycache__`, virtual environments, chapter figures, and regenerable simulator output. |
+
+The repository has **no** `docs/`, `notebooks/`, `tests/`, `tools/` or `verification/` directory
+at present; the documentation lives in the READMEs and handoff notes listed above. Adding a test
+suite and consolidated verification campaigns is tracked in the [Roadmap](#roadmap).
 
 ### Directory tree
 
 ```
-Fluid-Mechanics-ebook/
+fluid-mechanics-theory-computation-and-verification/
 ├── README.md                          # This file — the book companion README
+├── LICENSE                            # CC BY-NC 4.0 full legal text
+├── .gitattributes                     # LF normalisation + binary markings
+├── .gitignore                         # __pycache__, venvs, figures, runtime output
 ├── chapter01/                         # Foundations of the FVM — Couette–Poiseuille
 │   ├── ex1_1_analytical.py
 │   ├── ex1_2_fvm.py
 │   └── ex1_3_advanced.py
-├── chapter02/                        # Fluid statics and the hydrostatic balance
+├── chapter02/                         # Fluid statics and the hydrostatic balance
 │   ├── ex2_1_analytical.py
 │   ├── ex2_2_fvm.py
 │   └── ex2_3_advanced.py
@@ -896,48 +1044,56 @@ Fluid-Mechanics-ebook/
 │   ├── ex13_2_fvm.py
 │   └── ex13_3_advanced.py
 ├── CFDPY/                             # The complete educational CFD simulator
-    ├── README.md                      #   authoritative simulator documentation
-    ├── main.py                        #   CLI entry point + Simulation orchestrator
-    ├── requirements.txt               #   pinned Python dependencies
-    ├── config/                        #   case-file loader (JSON/YAML)
-    │   └── config_loader.py
-    ├── mesh/                          #   Cartesian structured collocated mesh
-    │   └── mesh.py
-    ├── numerics/                      #   stateless finite-volume operators
-    │   ├── interpolation.py           #   upwind / central / QUICK / TVD face values
-    │   ├── numba_kernels.py           #   @njit TVD limiter (NumPy fallback)
-    │   ├── gradients.py
-    │   ├── divergence.py
-    │   ├── laplacian.py
-    │   └── timestep.py                #   CFL / Fourier adaptive dt
-    ├── physics/                       #   fluid, materials, gravity, buoyancy
-    │   ├── fluid.py
-    │   ├── material.py
-    │   ├── gravity.py
-    │   └── buoyancy.py
-    ├── solver/                       #   boundary, linear, momentum, pressure, projection, energy, vof
-    │   ├── boundary.py
-    │   ├── linear_solver.py
-    │   ├── momentum.py
-    │   ├── pressure.py
-    │   ├── projection.py
-    │   ├── energy.py
-    │   └── vof.py
-    ├── visualization/                  #   matplotlib, tecplot, postprocessor
-    │   ├── matplotlib_view.py
-    │   ├── tecplot_writer.py
-    │   └── postprocessor.py
-    ├── examples/                      #   ready-to-run cases
-    │   ├── natural_convection_2D/config.json
-    │   ├── dam_break_2D/config.json
-    │   ├── backward_facing_step/config.json
-    │   └── liquid_drop_splash_2D/config.json
-    └── outputs/                       #   runtime output: PNG / CSV / .dat / HDF5 / MP4
+│   ├── README.md                      #   authoritative simulator documentation
+│   ├── Handoff.md                     #   splash example, restart & Tecplot handoff notes
+│   ├── main.py                        #   CLI entry point + Simulation orchestrator
+│   ├── requirements.txt               #   pinned Python dependencies
+│   ├── config/                        #   case-file loader (JSON/YAML)
+│   │   └── config_loader.py
+│   ├── mesh/                          #   Cartesian structured collocated mesh
+│   │   └── mesh.py
+│   ├── numerics/                      #   stateless finite-volume operators
+│   │   ├── interpolation.py           #     upwind / central / QUICK / TVD face values
+│   │   ├── numba_kernels.py           #     @njit TVD limiter (NumPy fallback)
+│   │   ├── gradients.py
+│   │   ├── divergence.py
+│   │   ├── laplacian.py
+│   │   └── timestep.py                #     CFL / Fourier adaptive dt
+│   ├── physics/                       #   fluid, materials, gravity, buoyancy
+│   │   ├── fluid.py
+│   │   ├── material.py
+│   │   ├── gravity.py
+│   │   └── buoyancy.py
+│   ├── solver/                        #   boundary, linear, momentum, pressure,
+│   │   ├── boundary.py                #     projection, energy, vof
+│   │   ├── linear_solver.py
+│   │   ├── momentum.py
+│   │   ├── pressure.py
+│   │   ├── projection.py
+│   │   ├── energy.py
+│   │   └── vof.py
+│   ├── visualization/                 #   matplotlib, tecplot, postprocessor
+│   │   ├── matplotlib_view.py
+│   │   ├── tecplot_writer.py
+│   │   └── postprocessor.py
+│   ├── examples/                      #   ready-to-run cases
+│   │   ├── natural_convection_2D/config.json
+│   │   ├── dam_break_2D/config.json
+│   │   ├── backward_facing_step/config.json
+│   │   └── liquid_drop_splash_2D/config.json
+│   └── outputs/                       #   runtime output: PNG / CSV / .dat / HDF5 / MP4
+│       ├── backward_facing_step/Backward_Facing_Step_Tecplot.wmv   (tracked)
+│       ├── dam_break_2D/dam_TecPlot.wmv                            (tracked)
+│       └── liquid_drop_splash_2D/liquid_drop_splash_TecPlot.wmv    (tracked)
 └── CFDPYGPU/                          # GPU-accelerated variant (Numba-CUDA, CPU fallback)
     ├── README.md                      #   authoritative GPU-simulator documentation
     ├── GPU_PERFORMANCE_REPORT.md      #   profiling + CPU-vs-GPU benchmarks + roadmap
+    ├── Handoff.md                     #   splash example, restart & Tecplot handoff notes
+    ├── Handoff_Cylinder.md            #   cylinder benchmark, staircase / IBM / cut-cell status
     ├── main.py                        #   CLI entry point + Simulation orchestrator
-    ├── requirements.txt               #   pinned Python dependencies (adds numba CUDA)
+    ├── requirements.txt               #   pinned Python dependencies (numba = CUDA path)
+    ├── profile_hotspots.py            #   cProfile per-step hotspot driver
+    ├── verify_cut_cell_pressure.py    #   algebraic checks for the cut-cell Poisson
     ├── config/                        #   case-file loader (JSON/YAML) + use_gpu flag
     │   └── config_loader.py
     ├── gpu/                           #   the GPU acceleration package (layered)
@@ -947,11 +1103,14 @@ Fluid-Mechanics-ebook/
     │   ├── linear.py                  #     GPU-resident preconditioned BiCGSTAB
     │   ├── validate_kernels.py        #     CPU-vs-GPU kernel validation
     │   └── validate_linear.py         #     GPU BiCGSTAB vs CPU on the real operator
-    ├── mesh/                          #   Cartesian structured collocated mesh
-    ├── numerics/                      #   stateless finite-volume operators
-    ├── physics/                       #   fluid, materials, gravity, buoyancy
-    ├── solver/                        #   + cut_cell / forces / ibm (curved-body IBM)
-    ├── visualization/                  #   matplotlib, tecplot, postprocessor
+    ├── mesh/                          #   identical to the CPU package
+    ├── numerics/                      #   identical to the CPU package
+    ├── physics/                       #   identical to the CPU package
+    ├── visualization/                 #   identical to the CPU package
+    ├── solver/                        #   CPU solver core + GPU-variant additions:
+    │   ├── forces.py                  #     Cd / Cl / Cp / Cf surface integration
+    │   ├── ibm.py                     #     mirror-point ghost-cell IBM (opt-in)
+    │   └── cut_cell.py                #     cut-cell geometry (dormant, flag OFF)
     ├── examples/                      #   ready-to-run cases
     │   ├── natural_convection_2D/config.json
     │   ├── dam_break_2D/config.json
@@ -959,17 +1118,20 @@ Fluid-Mechanics-ebook/
     │   ├── liquid_drop_splash_2D/config.json
     │   └── cylinder_flow/             #   Re sweep + mesh study + report
     │       ├── config.json
-    │       ├── run_reynolds.py
-    │       └── benchmarks.py
-    ├── outputs/                       #   runtime output: PNG / CSV / .dat / HDF5 / MP4 (animations tracked)
-    ├── docs/                         #   developer handoff notes
-    │   ├── Handoff.md                #     splash example, restart & Tecplot work
-    │   └── Handoff_Cylinder.md       #     cylinder benchmark & staircase caveat
-    └── tools/                        #   ad-hoc scripts: profiler, probes, algebraic checks
-        ├── profile_hotspots.py       #     cProfile per-step hotspot driver
-        ├── cylinder_probe.py         #     run a cylinder case, print Cd/Cl trajectory
-        └── verify_cut_cell_pressure.py  # algebraic checks for the cut-cell Poisson
+    │       ├── run_reynolds.py        #     sweep driver + cylinder_report.md writer
+    │       ├── benchmarks.py          #     literature comparison table
+    │       └── _probe.py              #     ad-hoc Cd/Cl trajectory probe
+    └── outputs/                       #   runtime output: PNG / CSV / .dat / HDF5 / MP4
+        ├── natural_convection_2D/     #     *_T.mp4, *_p.mp4                 (tracked)
+        ├── dam_break_2D/              #     *_T.mp4, *_p.mp4, *_alpha.mp4    (tracked)
+        ├── backward_facing_step/      #     *_T.mp4, *_p.mp4, *.wmv          (tracked)
+        └── liquid_drop_splash_2D/     #     *_T/_p/_alpha/_velocity.mp4      (tracked)
 ```
+
+Only the **rendered animation deliverables** (`.mp4`, `.wmv`) are tracked under `outputs/`; every
+other runtime artefact (PNG frames, CSV history, Tecplot `.dat`, HDF5 snapshots, run logs) is
+regenerable and is ignored by [`.gitignore`](.gitignore). See
+[Rendered Animations Shipped with the Repository](#rendered-animations-shipped-with-the-repository).
 
 ---
 
@@ -977,8 +1139,9 @@ Fluid-Mechanics-ebook/
 
 ### Python requirements
 
-The chapter programs require **Python 3.11+** and the standard scientific Python stack. The
-CFDPy simulator is developed and verified on Python 3.11 and is compatible with 3.12+.
+The chapter programs require **Python 3.11+** and the standard scientific Python stack. Both
+simulators (CFDPy and CFDPyGPU) are developed and verified on Python 3.11 and are compatible with
+3.12+; they use `from __future__ import annotations` and modern type-hint syntax throughout.
 
 ### Dependencies
 
@@ -998,14 +1161,17 @@ CFDPy simulator is developed and verified on Python 3.11 and is compatible with 
 A working **ffmpeg** binary on the system `PATH` enables MP4 animations; if ffmpeg is absent,
 CFDPy automatically falls back to a pillow-written GIF.
 
-### Installation
+### Installing the dependencies
 
 Clone the repository and install the runtime stack. The simulator's pinned dependencies live in
-[`CFDPY/requirements.txt`](CFDPY/requirements.txt):
+[`CFDPY/requirements.txt`](CFDPY/requirements.txt);
+[`CFDPYGPU/requirements.txt`](CFDPYGPU/requirements.txt) declares the same set — Numba is already
+in it, and on the GPU variant that same Numba install provides the `@cuda.jit` backend, so no
+extra package is needed for GPU support:
 
 ```bash
 git clone https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification.git
-cd Fluid-Mechanics-ebook
+cd fluid-mechanics-theory-computation-and-verification
 
 # core + recommended extras
 pip install -r CFDPY/requirements.txt
@@ -1041,11 +1207,10 @@ pip install -r CFDPY/requirements.txt
 
 The **CFDPyGPU** variant (see [GPU-Accelerated Simulator — CFDPyGPU](#gpu-accelerated-simulator--cfdpygpu))
 adds GPU acceleration on top of the same stack — only **Numba with CUDA support** plus an
-**NVIDIA CUDA GPU and driver** are required (no CuPy, no CUDA Python, no compiled extension). From
-the `CFDPYGPU/` directory:
+**NVIDIA CUDA GPU and driver** are required (no CuPy, no CUDA Python, no compiled extension):
 
 ```bash
-pip install -r CFDPYGPU/requirements.txt        # adds numba (CUDA) to the core stack
+pip install -r CFDPYGPU/requirements.txt        # same core stack; numba provides @cuda.jit
 # optional: CUDA runtime via pip wheel (no system CUDA Toolkit needed)
 pip install nvidia-cuda-runtime-cu12
 ```
@@ -1084,6 +1249,131 @@ python main.py examples/liquid_drop_splash_2D/config.json
 Each run prints a header and a progress bar and writes all configured outputs to the case's
 `output_dir` (`outputs/<name>/` by default). See [`CFDPY/README.md`](CFDPY/README.md) for the
 full case-file reference and the complete set of options.
+
+The GPU variant takes exactly the same command line from its own directory, and additionally
+prints a *CFDPy Hardware Report* at startup naming the execution device:
+
+```bash
+cd CFDPYGPU
+python main.py examples/cylinder_flow/config.json
+
+# hardware report only, no simulation
+python -c "from gpu import print_hardware_report; print_hardware_report()"
+```
+
+---
+
+## Output Formats
+
+Both simulators write every enabled output on the same cadence, controlled by `output_interval`
+(measured in simulation time) and the `save_*` booleans in the case file. Everything lands in the
+case's `output_dir`.
+
+| Format | File pattern | Enabled by | Contents |
+|---|---|---|---|
+| **PNG frames** | `T_%06d.png`, `p_%06d.png`, `vel_%06d.png` | `save_png` | Temperature / pressure / speed contours with velocity quiver, streamline and VOF-interface overlays |
+| **MP4 / GIF animation** | `<name>_T.mp4`, `<name>_p.mp4`, `<name>_alpha.mp4`, `<name>_velocity.mp4`, `<name>_vorticity.mp4` | `save_mp4` | Rendered in `finalize()`; falls back to a pillow-written GIF when ffmpeg is unavailable |
+| **CSV** | `history.csv`, `frame_%06d.csv` | `save_csv` | `history.csv` carries the per-frame time, `dt`, CFL, divergence residual, mean Nusselt number, and `Cd`/`Cl` when `compute_forces` is on; the numbered files are per-frame field dumps |
+| **Tecplot 360 ASCII** | `frame_%06d.dat` | `save_tecplot` | One `ZONETYPE=ORDERED` / `DATAPACKING=POINT` zone per step with `STRANDID` + `SOLUTIONTIME`; variables `X Y Z U V W Pressure Temperature Alpha` |
+| **HDF5 snapshot** | `frame_%06d.h5` | `save_hdf5` | `u, v, w, p, T, alpha` + simulation time — **also a valid restart checkpoint** (`"restart": "<path>"`) |
+| **Force diagnostics** | `<name>_forces.png`, `<name>_cl_fft.png` | `compute_forces` | `Cd(t)` / `Cl(t)` histories and the windowed FFT of the lift signal (GPU variant) |
+| **Cylinder report** | `examples/cylinder_flow/cylinder_report.md` | `run_reynolds.py` | Per-case Cd, Cl_rms, Strouhal, recirculation length and separation angle against the literature table (GPU variant) |
+
+A working **ffmpeg** binary on `PATH` enables MP4; otherwise the animation is written as a GIF.
+HDF5 output is skipped gracefully when `h5py` is not installed.
+
+Chapter programs are simpler: they print their tables to the console and write one PNG into the
+current working directory.
+
+---
+
+## Rendered Animations Shipped with the Repository
+
+Runtime output is regenerable and therefore ignored by git, with one deliberate exception: the
+**rendered animations** are tracked so the results can be viewed without running a simulation
+first. Fifteen animation files ship with the repository (≈32 MB in total).
+
+| Case | Tracked animations |
+|---|---|
+| Natural convection (GPU variant) | [`natural_convection_2D_T.mp4`](CFDPYGPU/outputs/natural_convection_2D/natural_convection_2D_T.mp4), [`natural_convection_2D_p.mp4`](CFDPYGPU/outputs/natural_convection_2D/natural_convection_2D_p.mp4) |
+| Dam break (GPU variant) | [`dam_break_2D_alpha.mp4`](CFDPYGPU/outputs/dam_break_2D/dam_break_2D_alpha.mp4), [`dam_break_2D_T.mp4`](CFDPYGPU/outputs/dam_break_2D/dam_break_2D_T.mp4), [`dam_break_2D_p.mp4`](CFDPYGPU/outputs/dam_break_2D/dam_break_2D_p.mp4) |
+| Liquid-drop splash (GPU variant) | [`liquid_drop_splash_2D_alpha.mp4`](CFDPYGPU/outputs/liquid_drop_splash_2D/liquid_drop_splash_2D_alpha.mp4), [`…_velocity.mp4`](CFDPYGPU/outputs/liquid_drop_splash_2D/liquid_drop_splash_2D_velocity.mp4), [`…_T.mp4`](CFDPYGPU/outputs/liquid_drop_splash_2D/liquid_drop_splash_2D_T.mp4), [`…_p.mp4`](CFDPYGPU/outputs/liquid_drop_splash_2D/liquid_drop_splash_2D_p.mp4) |
+| Backward-facing step (GPU variant) | [`backward_facing_step_T.mp4`](CFDPYGPU/outputs/backward_facing_step/backward_facing_step_T.mp4), [`backward_facing_step_p.mp4`](CFDPYGPU/outputs/backward_facing_step/backward_facing_step_p.mp4) |
+| Tecplot 360 renderings (`.wmv`) | [dam break](CFDPY/outputs/dam_break_2D/dam_TecPlot.wmv), [liquid-drop splash](CFDPY/outputs/liquid_drop_splash_2D/liquid_drop_splash_TecPlot.wmv), [backward-facing step](CFDPY/outputs/backward_facing_step/Backward_Facing_Step_Tecplot.wmv) (and a copy under `CFDPYGPU/`) |
+
+The `.wmv` files are Tecplot 360 renderings of the exported `frame_*.dat` series; the `.mp4`
+files are produced directly by the Matplotlib viewer in `finalize()`.
+
+---
+
+## Current Capabilities and Limitations
+
+This repository documents what it does *and* what it does not do. The following limitations are
+current and deliberate; each is recorded in more detail in the linked document.
+
+**Solver capabilities (verified).** Incompressible Navier–Stokes with energy transport, Boussinesq
+buoyancy and VOF free surfaces on 2D/3D structured collocated Cartesian meshes; incremental
+projection with a variable-coefficient Poisson solve whose null space is removed analytically;
+upwind / central / QUICK / TVD convection; implicit Euler and Crank–Nicolson time integration with
+adaptive CFL; CG / BiCGSTAB / GMRES with cached ILU(0); immersed obstacles by blocked cells; HDF5
+checkpoint/restart; Matplotlib and Tecplot output. The natural-convection, dam-break,
+backward-facing-step and liquid-drop-splash examples run end to end.
+
+**Limitations.**
+
+- **The cylinder benchmark does not validate.** Rasterising a circle into the cell mask pins flow
+  separation at the staircase's 90° corners. At Re = 40 the steady drag is `Cd ≈ 3.65` against the
+  literature value `1.52`, and the error is *mesh-independent* (3.71 at 200×80 → 3.65 at 400×160),
+  so it is not slow convergence. The mirror-point ghost-cell IBM (`"immersed_method": "ibm"`)
+  moves it only to `Cd ≈ 3.19`, because it corrects the tangential no-slip while no-penetration is
+  still imposed on the staircase faces. Treat this example as a demonstration of the staircase
+  limitation, not as a literature match. Full analysis in
+  [`CFDPYGPU/Handoff_Cylinder.md`](CFDPYGPU/Handoff_Cylinder.md) §3.
+- **The cut-cell path is dormant.** The geometry kernel is verified, and the aperture-weighted
+  Poisson plus flux-form face correction makes the cut-cell divergence vanish to ~1e-14 — but no
+  *collocated* cell-velocity recovery from those face fluxes is simultaneously stable,
+  non-smoothing and consistent with the cut-cell divergence. The work is left behind
+  `"ibm_cut_cell": false` pending a staggered-like rearchitecting that carries face fluxes as
+  primary state ([`Handoff_Cylinder.md`](CFDPYGPU/Handoff_Cylinder.md) §6).
+- **The GPU kernels are not yet in the production solve.** `gpu/kernels.py` and the
+  `GPUBiCGSTAB` in `gpu/linear.py` are validated against the CPU reference (matvec exact,
+  reductions ~1e-15, full solve agreeing to L2 ~1e-6), but they are deliberately **not** wired
+  into `PressureSolver`: with Jacobi preconditioning the GPU is 1.30× faster than CPU-without-ILU
+  at N = 64 000 yet only 0.25× as fast as CPU-with-ILU. Promotion waits on the multigrid
+  preconditioner ([`GPU_PERFORMANCE_REPORT.md`](CFDPYGPU/GPU_PERFORMANCE_REPORT.md) §4.3).
+- **No automated test suite.** Verification is performed by the chapter programs and by the
+  standalone harnesses (`gpu/validate_kernels.py`, `gpu/validate_linear.py`,
+  `verify_cut_cell_pressure.py`); there is no `pytest` suite and no CI workflow yet.
+- **No surface tension.** VOF runs with `sigma = 0`; the splash crown and jet are therefore
+  qualitatively correct but not physically crisp. A CSF model is the natural addition.
+- **No turbulence model in the simulator.** RANS closures are developed and verified in Chapter 10
+  as standalone programs, but `CFDPy`'s `MomentumSolver` is laminar; the closure is an identified
+  extension point, not an implemented feature.
+- **Structured uniform Cartesian meshes only.** No local refinement, AMR, unstructured meshes,
+  MPI domain decomposition, or SIMPLE/PISO coupling — all are documented extension points.
+- **Mass conservation in VOF is approximate.** The liquid-drop splash conserves mass to ~1.7 %
+  over a 4 s run; this is interface smearing, not a leak.
+
+---
+
+## Roadmap
+
+Ordered roughly by expected impact. The GPU items follow the incremental
+profile → implement → validate → benchmark → promote-only-on-success methodology set out in
+[`CFDPYGPU/GPU_PERFORMANCE_REPORT.md`](CFDPYGPU/GPU_PERFORMANCE_REPORT.md) §5.
+
+| # | Item | Status |
+|---|---|---|
+| 1 | **GPU geometric-multigrid preconditioner** — V-cycle with red-black Gauss–Seidel smoothing; converges in O(1) iterations and is the single change that makes the GPU solve a net win in *both* the single-phase and VOF regimes | next |
+| 2 | **Wire the GPU Poisson solve into the production `PressureSolver`**, keeping the CPU path as the automatic fallback | blocked on 1 |
+| 3 | **Keep fields GPU-resident across the whole step**, removing the per-solve host↔device copies | blocked on 2 |
+| 4 | **GPU stencil operators** (gradient, divergence, face interpolation) so a step runs without a single host transfer | blocked on 3 |
+| 5 | **GPU momentum / energy diffusion solves**, reusing the multigrid preconditioner | blocked on 1, 3 |
+| 6 | **Wall-flux / staggered cut-cell immersed boundary** — the change required to make the cylinder benchmark validate | designed, not started |
+| 7 | **Surface tension (CSF)** for the VOF free-surface cases | not started |
+| 8 | **Automated test suite + CI workflow** — unit tests for the finite-volume operators, regression tests for the example cases | not started |
+| 9 | **RANS closure in `MomentumSolver`**, promoting the Chapter 10 mixing-length and *k–ε* models into the simulator | not started |
+| 10 | **SIMPLE / PISO coupling**, unstructured meshes (via `meshio`), AMR, and MPI domain decomposition | extension points |
 
 ---
 
@@ -1164,42 +1454,61 @@ please cite the textbook:
 > *Fluid Mechanics: Theory, Computation, and Verification — A Finite-Volume Approach with
 > Python.* Companion repository, 2026.
 
-and refer to the simulator's own documentation for the methods implemented:
+and refer to the simulators' own documentation for the methods implemented:
 
 > CFDPy — a modular finite-volume CFD framework in Python. Companion code, 2026.
 > See [`CFDPY/README.md`](CFDPY/README.md).
+>
+> CFDPyGPU — a Numba-CUDA-accelerated variant of CFDPy. Companion code, 2026.
+> See [`CFDPYGPU/README.md`](CFDPYGPU/README.md) and
+> [`CFDPYGPU/GPU_PERFORMANCE_REPORT.md`](CFDPYGPU/GPU_PERFORMANCE_REPORT.md).
 
 ### BibTeX
 
 ```bibtex
 @book{FluidMechanicsFVM2026,
+  author    = {ileaof},
   title     = {Fluid Mechanics: Theory, Computation, and Verification ---
                A Finite-Volume Approach with Python},
   year      = {2026},
-  note      = {Companion Python repository and CFDPy simulator},
+  note      = {Companion Python repository, CFDPy and CFDPyGPU simulators},
   url       = {https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification}
 }
 
 @software{CFDPy2026,
-  title       = {{CFDPy} -- a modular finite-volume CFD framework in Python},
-  year        = {2026},
+  author       = {ileaof},
+  title        = {{CFDPy} -- a modular finite-volume CFD framework in Python},
+  year         = {2026},
   howpublished = {Companion code to \emph{Fluid Mechanics: Theory,
                   Computation, and Verification}},
-  url         = {https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification/tree/main/CFDPY}
+  url          = {https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification/tree/main/CFDPY}
+}
+
+@software{CFDPyGPU2026,
+  author       = {ileaof},
+  title        = {{CFDPyGPU} -- a Numba-CUDA-accelerated finite-volume CFD
+                  framework in Python},
+  year         = {2026},
+  howpublished = {Companion code to \emph{Fluid Mechanics: Theory,
+                  Computation, and Verification}},
+  url          = {https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification/tree/main/CFDPYGPU}
 }
 ```
 
+> **Note on the `author` field.** Replace `ileaof` with the full author name when the book is
+> published; the repository currently records only the maintainer's GitHub handle.
+
 ### License
 
-This repository — the chapter programs, the CFDPy simulator, and the companion
+This repository — the chapter programs, the CFDPy and CFDPyGPU simulators, and the companion
 documentation — is licensed under a
-**Creative Commons Attribution-NonCommercial 4.0 International (CC-BY-NC-4.0)** license.
+**Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)** license.
 See the [`LICENSE`](LICENSE) file for the full legal text.
 
-In short, you are free to **share** and **adapt** the material for any non-commercial
-purpose, provided you give appropriate credit to the textbook and indicate any changes
-made. Commercial use requires a separate license from the maintainer. The CFD simulator
-source headers carry attribution notices that must be preserved on redistribution.
+In short, you are free to **share** and **adapt** the material for any non-commercial purpose,
+provided you give appropriate credit to the textbook and indicate any changes made. Commercial
+use requires a separate license from the maintainer. This single repository-level `LICENSE`
+governs every file in the tree, including both simulator packages.
 
 ### Contributing
 
@@ -1223,10 +1532,19 @@ standards against which every scheme is verified. The finite-volume, projection,
 Riemann-solver methods implemented in CFDPy draw on the classical literature of Patankar, Chorin,
 Toro, Roache, and LeVeque.
 
-### Contact
+### Author and Contact
 
-For corrections, questions, or contributions, please open an issue on the repository or contact
-the maintainer through the channels listed in the repository profile.
+This repository is written and maintained by **[@ileaof](https://github.com/ileaof)**, author of
+*Fluid Mechanics: Theory, Computation, and Verification — A Finite-Volume Approach with Python*.
+The book, the thirty-nine chapter programs, and both simulator packages (CFDPy and CFDPyGPU) are
+the work of a single author; the benchmark data and classical methods they are verified against
+are credited in [Acknowledgments](#acknowledgments).
+
+- **Repository:** <https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification>
+- **Issues and corrections:** please open an issue on the repository — this is the preferred
+  channel for errata, questions about a derivation or a program, and contribution proposals.
+- **Commercial licensing:** enquiries about use outside the CC BY-NC 4.0 terms should be
+  addressed to the maintainer through the contact details on the GitHub profile.
 
 ---
 

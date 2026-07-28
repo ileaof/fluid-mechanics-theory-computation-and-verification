@@ -1,4 +1,8 @@
-# CFDPy GPU Acceleration — Performance Report
+# CFDPyGPU — GPU Acceleration Performance Report
+
+> **Scope.** This report covers the GPU work in [`CFDPYGPU/`](README.md).  The
+> framework itself is documented in [`README.md`](README.md); the repository
+> overview is in the root [README](../README.md).
 
 > **Methodology reminder (from the spec):** *"Never rewrite the entire solver
 > at once. Proceed incrementally. At each step: Profile → Select next hotspot

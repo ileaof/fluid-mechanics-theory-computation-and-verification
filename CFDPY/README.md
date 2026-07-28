@@ -1,7 +1,7 @@
 # CFDPy — a modular Finite-Volume CFD framework in Python
 
 CFDPy is an **educational and professional** Computational Fluid Dynamics
-framework written from scratch in Python 3.12+ (no OpenFOAM, FEniCS or FiPy).
+framework written from scratch in Python 3.11+ (no OpenFOAM, FEniCS or FiPy).
 It solves the incompressible Navier–Stokes equations together with energy,
 scalar transport and Volume-of-Fluid (VOF) free-surface models on a Cartesian
 structured mesh, using the **Finite Volume Method** with a **projection
@@ -86,7 +86,7 @@ compressible / radiation / phase-change / species models.
 ### Dependencies
 
 Only the libraries listed in the project specification are used (pinned in
-[`requirements.txt`](#requirements)):
+[`requirements.txt`](requirements.txt)):
 
 | Library       | Purpose                                  | Required? |
 |---------------|------------------------------------------|-----------|
@@ -104,7 +104,8 @@ Only the libraries listed in the project specification are used (pinned in
 produces CSV / Tecplot / PNG / MP4.  Likewise, the TVD limiter falls back to a
 pure-NumPy implementation if `numba` is missing.
 
-Install the runtime stack (recommended, from the project root):
+Install the runtime stack (recommended, from the `CFDPY/` directory —
+there is no requirements file at the repository root):
 
 ```bash
 pip install -r requirements.txt          # core + recommended extras
@@ -124,15 +125,15 @@ a pillow-written **GIF**.
 
 ### No build step
 
-CFDPy is pure Python — just clone/copy the directory and run `main.py` from the
-project root so that the package imports (`config`, `mesh`, `numerics`, …)
+CFDPy is pure Python — just clone the repository and run `main.py` from the
+`CFDPY/` directory, so that the package imports (`config`, `mesh`, `numerics`, …)
 resolve.
 
 ---
 
 ## Quick start — running the examples
 
-From the project root:
+From the `CFDPY/` directory:
 
 ```bash
 python main.py examples/natural_convection_2D/config.json
@@ -143,6 +144,14 @@ python main.py examples/liquid_drop_splash_2D/config.json
 
 Each run prints a header, a progress bar, and writes all configured outputs to
 the case's `output_dir` (`outputs/<name>/` by default).
+
+> ⚠️ **Fresh clone: clear the splash case's `restart` key first.**
+> `examples/liquid_drop_splash_2D/config.json` ships with
+> `"restart": "outputs/liquid_drop_splash_2D/frame_001242.h5"`, the checkpoint from which the
+> case was extended from 1.2 s to 4.0 s.  Runtime frames are not tracked in git, so on a fresh
+> clone that file does not exist and the run aborts when it tries to open it.  Set
+> `"restart": ""` for a from-scratch run (see
+> [Restart / checkpoint resume](#restart--checkpoint-resume)).
 
 ### Example 1 — Natural convection in a square cavity
 
@@ -286,7 +295,10 @@ This replaces the legacy `F=POINT` token (a deprecated finite-element
 specifier that conflicts with `DATAPACKING` and is rejected by current
 Tecplot 360).  The files round-trip through `py2tec.tec2py`, and `STRANDID` +
 `SOLUTIONTIME` let Tecplot chain the per-step files into a time animation.  All
-four example output directories ship their `frame_*.dat` in this format.
+four example cases write their `frame_*.dat` in this format when `save_tecplot`
+is on.  The `.dat` frames are regenerable and are therefore not tracked in git —
+only the rendered `.wmv` animations under `outputs/` are (see the root
+[README](../README.md#rendered-animations-shipped-with-the-repository)).
 
 #### Immersed obstacles (blocked cells)
 
@@ -585,8 +597,9 @@ ProjectionMethod.step(u, v, w, p, dt, sources, rho):
 ## Project organization
 
 ```
-CFDPython/
+CFDPY/
 ├── main.py                  # CLI entry point + Simulation orchestrator
+├── requirements.txt         # pinned Python dependencies
 ├── config/
 │   └── config_loader.py     # Config dataclass, BoundarySpec, JSON/YAML loader
 ├── mesh/
@@ -671,4 +684,24 @@ The architecture deliberately leaves clean extension points:
 
 ## License
 
-Educational / research use.  See the source headers for attribution.
+Licensed under **Creative Commons Attribution-NonCommercial 4.0 International
+(CC BY-NC 4.0)**, together with the rest of the repository.  The full legal
+text is in [`LICENSE`](../LICENSE) at the repository root.
+
+You are free to share and adapt this framework for any **non-commercial**
+purpose, provided you give appropriate credit and indicate any changes made.
+Commercial use requires a separate licence from the maintainer.  If you use
+CFDPy in teaching, research or a publication, please cite it as described in
+the root [README](../README.md#citation).
+
+---
+
+## See also
+
+- [`../README.md`](../README.md) — the book companion README: chapter
+  programs, repository structure, installation, limitations and roadmap.
+- [`Handoff.md`](Handoff.md) — developer notes on the liquid-drop splash
+  example, the restart/resume path and the Tecplot dialect migration.
+- [`../CFDPYGPU/README.md`](../CFDPYGPU/README.md) — the GPU-accelerated
+  superset of this framework (Numba-CUDA kernels, force integration, immersed
+  boundary work), which runs the same case files.

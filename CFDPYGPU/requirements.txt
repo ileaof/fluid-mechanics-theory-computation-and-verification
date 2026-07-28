@@ -1,4 +1,8 @@
-# CFDPy — Python dependencies
+# CFDPyGPU — Python dependencies
+# ---------------------------------------------------------------------------
+# Same package set as CFDPy: the GPU path needs no extra Python package beyond
+# numba, which is already listed below.  See README.md ("GPU acceleration") for
+# the NVIDIA driver / CUDA runtime requirements, which are outside pip.
 # ---------------------------------------------------------------------------
 # Core runtime (required).  All three are hard dependencies: the framework
 # uses NumPy array numerics, SciPy sparse matrices / Krylov solvers / ILU, and
@@ -13,6 +17,8 @@ matplotlib>=3.7
 tqdm>=4.60            # progress bar during the time loop (optional, cosmetic)
 h5py>=3.8             # HDF5 snapshot output (skipped silently if missing)
 numba>=0.58            # @njit TVD flux-limiter kernel (pure-NumPy fallback)
+                       # AND the @cuda.jit GPU kernels in gpu/ (needs a CUDA
+                       # build of numba + an NVIDIA driver; falls back to CPU)
 
 # ---------------------------------------------------------------------------
 # Optional extras (NOT required by the bundled examples; only needed for the
@@ -20,3 +26,5 @@ numba>=0.58            # @njit TVD flux-limiter kernel (pure-NumPy fallback)
 # PyYAML>=6.0           # YAML case files (JSON case files always work)
 # meshio>=5.3           # unstructured-mesh I/O (future extension point)
 # pyvista>=0.42         # optional interactive 3D viewer (not used by default)
+# nvidia-cuda-runtime-cu12  # ships cudart64 so gpu/hardware.py can report the
+#                           # CUDA runtime version without a system CUDA Toolkit
