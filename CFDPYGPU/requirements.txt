@@ -1,0 +1,22 @@
+# CFDPy — Python dependencies
+# ---------------------------------------------------------------------------
+# Core runtime (required).  All three are hard dependencies: the framework
+# uses NumPy array numerics, SciPy sparse matrices / Krylov solvers / ILU, and
+# Matplotlib for PNG plots and MP4/GIF animations.
+numpy>=1.25
+scipy>=1.11
+matplotlib>=3.7
+
+# ---------------------------------------------------------------------------
+# Recommended extras (used by the default examples; the framework degrades
+# gracefully if any of these is absent).
+tqdm>=4.60            # progress bar during the time loop (optional, cosmetic)
+h5py>=3.8             # HDF5 snapshot output (skipped silently if missing)
+numba>=0.58            # @njit TVD flux-limiter kernel (pure-NumPy fallback)
+
+# ---------------------------------------------------------------------------
+# Optional extras (NOT required by the bundled examples; only needed for the
+# features listed).  Install separately if you use them.
+# PyYAML>=6.0           # YAML case files (JSON case files always work)
+# meshio>=5.3           # unstructured-mesh I/O (future extension point)
+# pyvista>=0.42         # optional interactive 3D viewer (not used by default)
