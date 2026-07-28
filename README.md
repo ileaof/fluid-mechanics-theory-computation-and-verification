@@ -15,6 +15,8 @@
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-orange.svg)](LICENSE)
 [![Verification](https://img.shields.io/badge/Method-Verification--driven-success.svg)](#computational-philosophy)
 [![CFDPy](https://img.shields.io/badge/CFD-CFDPy-orange.svg)](CFDPY/README.md)
+[![CFDPyGPU](https://img.shields.io/badge/GPU-CFDPyGPU-76B900.svg)](CFDPYGPU/README.md)
+[![CUDA](https://img.shields.io/badge/CUDA-Numba-76B900.svg)](CFDPYGPU/README.md)
 
 ---
 
@@ -37,6 +39,7 @@
   - [Chapter 13 — Buoyant Flows and Free-Surface Problems](#chapter-13--buoyant-flows-and-free-surface-problems)
 - [Python Programs](#python-programs)
 - [CFD Simulator — CFDPy](#cfd-simulator--cfdpy)
+- [GPU-Accelerated Simulator — CFDPyGPU](#gpu-accelerated-simulator--cfdpygpu)
 - [Repository Structure](#repository-structure)
 - [Installation](#installation)
 - [Computational Philosophy](#computational-philosophy)
@@ -65,7 +68,10 @@ The repository contains:
   Sod shock tube, dam break) solved to publication-grade standards; and
 - **the complete educational CFD simulator**, **CFDPy**, a modular finite-volume framework that
   solves the incompressible Navier–Stokes equations with energy transport, Boussinesq buoyancy,
-  and Volume-of-Fluid free surfaces on structured Cartesian meshes.
+  and Volume-of-Fluid free surfaces on structured Cartesian meshes; and
+- **a GPU-accelerated variant**, **CFDPyGPU**, that ports the finite-volume kernels and the
+  pressure-Poisson Krylov solve to NVIDIA CUDA through Numba, with an automatic, numerics-identical
+  fallback to the CPU path when no CUDA GPU is present.
 
 The guiding principle of the book, and of this repository, is **verification-driven scientific
 computing**. A numerical result is not accepted until it has been shown to converge to a known
@@ -630,6 +636,176 @@ python main.py examples/backward_facing_step/config.json
 python main.py examples/liquid_drop_splash_2D/config.json
 ```
 
+> 🖥️ **GPU variant.** A CUDA-accelerated port of CFDPy — **CFDPyGPU** — lives in
+> [`CFDPYGPU/`](CFDPYGPU/README.md) and is documented in the next section. It shares the same
+> finite-volume numerics and case files, ports the pressure-Poisson Krylov solve and the
+> finite-volume kernels to NVIDIA CUDA via Numba, and falls back to this CPU implementation
+> unchanged when no GPU is available.
+
+---
+
+## GPU-Accelerated Simulator — CFDPyGPU
+
+**CFDPyGPU** is the GPU-accelerated variant of CFDPy. It mirrors the CPU simulator's package
+layout (`config`, `mesh`, `numerics`, `physics`, `solver`, `visualization`, `examples`) and adds
+a dedicated **`gpu/`** package that ports the performance-critical numerical kernels to NVIDIA CUDA.
+The two variants share the same finite-volume discretisation, the same projection method, and the
+same JSON case files, so a case that runs on CPU runs on GPU with no change to its `config.json`.
+
+> 📄 **The complete GPU documentation — the layered `gpu/` package, the kernel design, the
+> validation harnesses, and the honest CPU-vs-GPU benchmark tables — is maintained in the
+> simulator's own README:**
+>
+> **➡️ [`CFDPYGPU/README.md`](CFDPYGPU/README.md)** — please refer there for full details.
+> The measured profiling and benchmark numbers live in
+> [`CFDPYGPU/GPU_PERFORMANCE_REPORT.md`](CFDPYGPU/GPU_PERFORMANCE_REPORT.md).
+
+### GPU acceleration support
+
+GPU acceleration is **opt-in and self-disabling**: a single `use_gpu` flag in the case file
+(defaults to `True`) gates the GPU path, and the framework probes the hardware at startup and
+prints a *CFDPy Hardware Report*. When a CUDA-capable NVIDIA GPU is available the simulation runs
+on the device; when it is not — or when `use_gpu: false` — the framework silently falls back to the
+original pure-NumPy/SciPy CPU code path with **identical numerics**. A CPU-only machine never pays
+any GPU import cost: the CUDA backend and kernels are imported lazily, only when a GPU is actually
+in use.
+
+### CUDA implementation
+
+The GPU work is layered so that the CPU/GPU choice is made in one place and the surrounding solver
+code is device-agnostic:
+
+- **`gpu/hardware.py`** — the single source of truth for "is there a usable NVIDIA GPU?". Probes
+  device attributes (name, compute capability, SM count, memory, warp size), and queries the
+  CUDA driver/runtime versions through the bundled `cudart64` DLL when locatable. Conservative and
+  side-effect free: it only *reads* attributes and never allocates device memory or creates a
+  context that would disturb a later run.
+- **`gpu/backend.py`** — a small array/device backend with two implementations of the same
+  interface: `NumPyBackend` (the original CPU path and the fallback) and `CUDABackend`
+  (Numba-CUDA device arrays living in Numba's per-context memory pool, so repeated
+  `zeros`/`empty` of the same shape reuse cached allocations instead of round-tripping through
+  `cudaMalloc`/`cudaFree`). `get_backend()` returns the CUDA backend when `use_gpu` is true *and* a
+  GPU was detected, else the NumPy backend; the result is cached process-wide.
+- **`gpu/kernels.py`** — low-level `@cuda.jit` kernels: a sparse CSR matrix-vector product
+  (`matvec_csr`, one thread per row, grid-stride, race-free without atomics) and the BLAS-1
+  reductions a Krylov driver is built from (`dot`, `dot2`, `max_abs`, `norm2`, and the in-place
+  `copy`/`axpy`/`scale_add`/`fill`/`div_pointwise`). The two-level shared-memory tree reduction
+  writes one partial sum per block (no float atomics, deterministic) and reduces the partials on the
+  device, so only **one float crosses device→host per reduction**; `dot2` fuses two dot products
+  into a single host sync (the BiCGSTAB *ω*-step needs `(t,s)` and `(t,t)` together).
+- **`gpu/linear.py`** — `GPUBiCGSTAB`, a GPU-resident preconditioned BiCGSTAB (van der Vorst) with an
+  optional **Jacobi (diagonal) preconditioner** — the only preconditioner cheap on a GPU (a
+  pointwise divide) and free of the sequential triangular solves that make ILU awkward on a device.
+  Workspace is allocated once per solver instance and reused across solves; the inverse diagonal is
+  cached per matrix identity and rebuilt only when the matrix changes. The convergence test uses the
+  cheap recurrence residual but verifies with the *true* residual `b − A x` on exit, to catch the
+  BiCGSTAB phantom-convergence stop, and the residual norm is only evaluated every 4 iterations
+  (`check_every = 4`) to cut sync overhead.
+
+Validation harnesses (`gpu/validate_kernels.py`, `gpu/validate_linear.py`) confirm that every GPU
+kernel matches its NumPy reference to round-off (matvec exact, reductions ~1e-15) and that the GPU
+BiCGSTAB solution agrees with the CPU solution to L2 ~1e-6 / rel∞ ~1e-7 on the real production
+pressure-Poisson operator.
+
+### NVIDIA GPU requirements and supported hardware
+
+- An **NVIDIA CUDA-capable GPU** (any compute capability supported by the installed Numba build;
+  developed and benchmarked on a GeForce RTX 4050 Laptop GPU, compute capability 8.9, 6 GB).
+- The **NVIDIA CUDA driver** installed on the system (the runtime is provided either by a
+  system CUDA Toolkit or, conveniently, by the `nvidia-*` pip wheels — see below).
+- **Numba ≥ 0.58 built with CUDA support** (`numba.cuda`). Numba is the *only* additional
+  dependency the GPU path requires — there is **no** dependence on CuPy, on CUDA Python, or on a
+  hand-written extension module. The `@cuda.jit` kernels and the device backend are pure Numba.
+
+Non-NVIDIA GPUs (AMD ROCm, Intel oneAPI, Apple Metal) are **not** supported by this path; they fall
+back to the CPU implementation automatically.
+
+### Parallel execution strategy
+
+The kernels follow a deliberately simple, structured-stencil-friendly model:
+
+- **One thread per row / per cell**, with grid-stride loops so a single launch covers any problem
+  size. The sparse matvec assigns each row to exactly one thread (race-free accumulation, no
+  atomics); the reductions use a 256-thread block (a power of two, so the shared-memory tree
+  reduction is exact) with a grid-stride first pass and a single-block final reduce.
+- **No inter-block coupling**, so the 2-D stencil operators (gradient, divergence,
+  face-interpolate) slated for the roadmap map to natural 2-D CUDA grids with shared-memory halos
+  and need no host↔device transfer during a cycle.
+- **Fields stay resident**: the device memory pool and the per-solver workspace cache keep
+  allocations alive across steps, eliminating repeated `cudaMalloc`/`cudaFree` and the per-solve
+  host↔device copies that would otherwise dominate at small *N*.
+- **Multi-GPU / MPI extension point**: the backend carries a `device_index` and activates its
+  context on first use, so the future domain-decomposition path can call
+  `init_backend(device_index = local_rank)` once per MPI rank — one rank, one GPU — with no change
+  to the rank-local kernels.
+
+### Dependencies
+
+| Component | Purpose | Required for GPU? |
+|---|---|---|
+| `numba` ≥ 0.58 (with CUDA) | `@cuda.jit` kernels + device-array backend | yes (GPU path) |
+| NVIDIA CUDA driver | device context + runtime | yes (GPU path) |
+| CUDA runtime (`cudart64`) | queried for the version report only | optional |
+| `nvidia-cuda-runtime-cu12` pip wheel | ships `cudart64` without a system CUDA Toolkit | optional (convenient) |
+
+No CuPy, no CUDA Python (`nvidia-*` bindings), and no compiled extension are needed.
+
+### Installation (GPU path)
+
+The GPU path adds only Numba (already an optional CPU dependency) on top of the standard stack:
+
+```bash
+cd CFDPYGPU
+pip install -r requirements.txt          # numpy / scipy / matplotlib / tqdm / h5py / numba
+```
+
+To obtain the CUDA runtime without installing a system-wide CUDA Toolkit, the `nvidia-*` pip
+wheels bundle `cudart64` and are auto-discovered by `gpu/hardware.py`:
+
+```bash
+pip install nvidia-cuda-runtime-cu12     # optional; only needed for the version report
+```
+
+There is **no build step** and **no separate GPU install** — clone the repository, install the
+Python dependencies, and run. If no NVIDIA GPU is detected, the run simply prints
+`Execution Device : CPU` and proceeds on the CPU path.
+
+### Example usage
+
+```bash
+cd CFDPYGPU
+python main.py examples/natural_convection_2D/config.json
+python main.py examples/dam_break_2D/config.json
+python main.py examples/backward_facing_step/config.json
+python main.py examples/liquid_drop_splash_2D/config.json
+python main.py examples/cylinder_flow/config.json         # Re-sweep + mesh study + report
+```
+
+Force the CPU path on a GPU-equipped machine (for validation / debugging):
+
+```json
+{ "...": "...", "use_gpu": false }
+```
+
+Print only the hardware report:
+
+```bash
+python -c "from gpu import print_hardware_report; print_hardware_report()"
+```
+
+### Relationship between the CPU and GPU versions
+
+CFDPyGPU is a **superset fork** of CFDPy: the CPU package is reproduced essentially verbatim and a
+new `gpu/` package is layered on top, so the two share the same governing equations, finite-volume
+operators, projection method, and JSON case format. The GPU path is being promoted incrementally
+— profile, port one hotspot, validate against the CPU, benchmark, and only then wire it into the
+production solver. The GPU kernels and `GPUBiCGSTAB` are validated but, per this methodology, are
+**not yet wired into the production `PressureSolver`** until the planned geometric-multigrid
+preconditioner makes the GPU solve a net win in *both* the single-phase and VOF regimes; until then
+the production solver runs on the CPU. See
+[`CFDPYGPU/GPU_PERFORMANCE_REPORT.md`](CFDPYGPU/GPU_PERFORMANCE_REPORT.md) for the honest
+CPU-vs-GPU benchmark tables and the incremental GPU roadmap.
+
 ---
 
 ## Repository Structure
@@ -652,6 +828,10 @@ described below.
 | `CFDPY/config/` | The case-file loader and `Config`/`BoundarySpec` dataclasses. |
 | `CFDPY/visualization/` | Matplotlib viewer, Tecplot exporter, and postprocessor. |
 | `CFDPY/outputs/` | **Verification / output data** written at runtime: PNG, CSV, Tecplot `.dat`, HDF5 snapshots, MP4/GIF, and run logs. |
+| `CFDPYGPU/` | The **GPU-accelerated variant of CFDPy** (Numba-CUDA kernels + a GPU-resident BiCGSTAB, with automatic CPU fallback), mirroring the CPU package layout and adding a `gpu/` package. Has its own README, requirements, and example cases. |
+| `CFDPYGPU/gpu/` | The **GPU backend**: hardware detection, NumPy/CUDA array backend, `@cuda.jit` BLAS-1 + sparse-matvec kernels (`kernels.py`), and the GPU-resident preconditioned BiCGSTAB (`linear.py`). |
+| `CFDPYGPU/examples/` | Ready-to-run GPU cases — natural convection, dam break, backward-facing step, liquid-drop splash, plus **cylinder flow** with a Reynolds-sweep / mesh-study driver and literature benchmark table. |
+| `CFDPYGPU/GPU_PERFORMANCE_REPORT.md` | The profiling, CPU-vs-GPU benchmark tables, and the incremental GPU roadmap. |
 | `docs/` | (Reserved) lecture notes, slides, and supplementary documentation for the book. |
 | `notebooks/` | (Reserved) Jupyter notebooks for interactive exploration of the analytical solutions and convergence studies. |
 | `tests/` | (Reserved) unit and regression tests for the finite-volume operators and the simulator. |
@@ -715,7 +895,7 @@ Fluid-Mechanics-ebook/
 │   ├── ex13_1_analytical.py
 │   ├── ex13_2_fvm.py
 │   └── ex13_3_advanced.py
-└── CFDPY/                             # The complete educational CFD simulator
+├── CFDPY/                             # The complete educational CFD simulator
     ├── README.md                      #   authoritative simulator documentation
     ├── main.py                        #   CLI entry point + Simulation orchestrator
     ├── requirements.txt               #   pinned Python dependencies
@@ -753,6 +933,36 @@ Fluid-Mechanics-ebook/
     │   ├── backward_facing_step/config.json
     │   └── liquid_drop_splash_2D/config.json
     └── outputs/                       #   runtime output: PNG / CSV / .dat / HDF5 / MP4
+└── CFDPYGPU/                          # GPU-accelerated variant (Numba-CUDA, CPU fallback)
+    ├── README.md                      #   authoritative GPU-simulator documentation
+    ├── GPU_PERFORMANCE_REPORT.md      #   profiling + CPU-vs-GPU benchmarks + roadmap
+    ├── main.py                        #   CLI entry point + Simulation orchestrator
+    ├── requirements.txt               #   pinned Python dependencies (adds numba CUDA)
+    ├── profile_hotspots.py            #   cProfile driver for the per-step hotspots
+    ├── config/                        #   case-file loader (JSON/YAML) + use_gpu flag
+    │   └── config_loader.py
+    ├── gpu/                           #   the GPU acceleration package (layered)
+    │   ├── hardware.py                #     detection + startup hardware report
+    │   ├── backend.py                 #     NumPy / CUDA array backend (auto-detect)
+    │   ├── kernels.py                 #     @cuda.jit BLAS-1 + sparse CSR matvec
+    │   ├── linear.py                  #     GPU-resident preconditioned BiCGSTAB
+    │   ├── validate_kernels.py        #     CPU-vs-GPU kernel validation
+    │   └── validate_linear.py         #     GPU BiCGSTAB vs CPU on the real operator
+    ├── mesh/                          #   Cartesian structured collocated mesh
+    ├── numerics/                      #   stateless finite-volume operators
+    ├── physics/                       #   fluid, materials, gravity, buoyancy
+    ├── solver/                        #   + cut_cell / forces / ibm (curved-body IBM)
+    ├── visualization/                  #   matplotlib, tecplot, postprocessor
+    ├── examples/                      #   ready-to-run cases
+    │   ├── natural_convection_2D/config.json
+    │   ├── dam_break_2D/config.json
+    │   ├── backward_facing_step/config.json
+    │   ├── liquid_drop_splash_2D/config.json
+    │   └── cylinder_flow/             #   Re sweep + mesh study + report
+    │       ├── config.json
+    │       ├── run_reynolds.py
+    │       └── benchmarks.py
+    └── outputs/                       #   runtime output: PNG / CSV / .dat / HDF5 / MP4
 ```
 
 ---
@@ -773,7 +983,8 @@ CFDPy simulator is developed and verified on Python 3.11 and is compatible with 
 | `matplotlib` | PNG plots and MP4/GIF animations | yes |
 | `tqdm` | Progress bar | optional |
 | `h5py` | HDF5 snapshot output (skipped gracefully if missing) | optional |
-| `numba` | JIT-accelerated TVD flux limiter (pure-NumPy fallback) | optional |
+| `numba` | JIT-accelerated TVD flux limiter (pure-NumPy fallback); **CUDA backend for CFDPyGPU** (`@cuda.jit` kernels) | optional |
+| NVIDIA CUDA GPU + driver | GPU acceleration in `CFDPYGPU/` (auto-falls back to CPU when absent; no CuPy / CUDA Python needed) | optional |
 | `pyyaml` | YAML case files (JSON always works) | optional |
 | `meshio` | Unstructured-mesh I/O (future extension) | optional |
 | `pyvista` | Optional interactive 3D viewer | optional |
@@ -819,6 +1030,24 @@ python -m venv .venv
 
 pip install -r CFDPY/requirements.txt
 ```
+
+### GPU acceleration (optional)
+
+The **CFDPyGPU** variant (see [GPU-Accelerated Simulator — CFDPyGPU](#gpu-accelerated-simulator--cfdpygpu))
+adds GPU acceleration on top of the same stack — only **Numba with CUDA support** plus an
+**NVIDIA CUDA GPU and driver** are required (no CuPy, no CUDA Python, no compiled extension). From
+the `CFDPYGPU/` directory:
+
+```bash
+pip install -r CFDPYGPU/requirements.txt        # adds numba (CUDA) to the core stack
+# optional: CUDA runtime via pip wheel (no system CUDA Toolkit needed)
+pip install nvidia-cuda-runtime-cu12
+```
+
+If no NVIDIA GPU is detected, CFDPyGPU prints `Execution Device : CPU` and runs the original CPU
+path with identical numerics. See [`CFDPYGPU/README.md`](CFDPYGPU/README.md) and
+[`CFDPYGPU/GPU_PERFORMANCE_REPORT.md`](CFDPYGPU/GPU_PERFORMANCE_REPORT.md) for the kernel design,
+validation, and benchmark tables.
 
 ### Running the chapter examples
 
