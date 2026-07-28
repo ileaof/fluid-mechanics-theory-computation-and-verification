@@ -45,6 +45,7 @@
 - [GPU-Accelerated Simulator — CFDPyGPU](#gpu-accelerated-simulator--cfdpygpu)
 - [Repository Structure](#repository-structure)
 - [Installation](#installation)
+- [Restarting a Simulation from a Checkpoint](#restarting-a-simulation-from-a-checkpoint)
 - [Output Formats](#output-formats)
 - [Rendered Animations Shipped with the Repository](#rendered-animations-shipped-with-the-repository)
 - [Current Capabilities and Limitations](#current-capabilities-and-limitations)
@@ -746,6 +747,9 @@ python main.py examples/liquid_drop_splash_2D/config.json
 > so that file does not exist in a fresh clone and the run aborts when it tries to open it. Set
 > `"restart": ""` in the case file for a from-scratch run. The same applies to
 > [`CFDPYGPU/examples/liquid_drop_splash_2D/config.json`](CFDPYGPU/examples/liquid_drop_splash_2D/config.json).
+> Once you have generated checkpoints of your own, see
+> [Restarting a Simulation from a Checkpoint](#restarting-a-simulation-from-a-checkpoint) for the
+> full resume procedure.
 
 > 🖥️ **GPU variant.** A CUDA-accelerated port of CFDPy — **CFDPyGPU** — lives in
 > [`CFDPYGPU/`](CFDPYGPU/README.md) and is documented in the next section. It shares the same
@@ -1230,8 +1234,8 @@ python chapter08/ex8_1_analytical.py
 python chapter12/ex12_2_fvm.py
 ```
 
-Programs write their figures and convergence tables next to the script or to a local `figures/`
-folder.
+Each program prints its convergence tables to the console and writes one PNG figure into the
+**current working directory**.
 
 ### Running the CFD simulator
 
@@ -1260,6 +1264,126 @@ python main.py examples/cylinder_flow/config.json
 # hardware report only, no simulation
 python -c "from gpu import print_hardware_report; print_hardware_report()"
 ```
+
+---
+
+## Restarting a Simulation from a Checkpoint
+
+Long runs do not have to be completed in one sitting. **Every HDF5 frame the simulator writes is
+a valid restart checkpoint** — there is no separate checkpoint file format and no extra
+configuration to enable one. This is how the liquid-drop splash case was extended from 1.2 s to
+4.0 s without recomputing the first leg.
+
+### What a checkpoint contains
+
+Each `frame_%06d.h5` in the case's `output_dir` stores the complete cell-centred state — `u`, `v`,
+`w`, `p`, `T` and `alpha` — the mesh coordinates `X`, `Y`, `Z`, and the simulation time as an HDF5
+attribute. That is everything `Simulation.restart_from()` needs to continue the time loop.
+
+### Step-by-step procedure
+
+**1. Make sure checkpoints are being written.** Checkpoints are the HDF5 output, so the case must
+have `save_hdf5` enabled and `h5py` installed. The write cadence is `output_interval`, measured in
+simulation time:
+
+```json
+{
+    "save_hdf5": true,
+    "output_interval": 0.05,
+    "output_dir": "outputs/my_case"
+}
+```
+
+A smaller `output_interval` gives more restart points at the cost of more disk. If `h5py` is
+missing the run still completes, but it writes no checkpoints and cannot be resumed.
+
+**2. Run the case as usual, and let it stop** — whether it finishes, you interrupt it, or the
+machine goes down. The frames written up to that point remain on disk:
+
+```bash
+cd CFDPY
+python main.py examples/my_case/config.json
+```
+
+**3. Pick the checkpoint to resume from.** List the frames in the case's output directory and take
+the last one (highest number = latest simulation time):
+
+```bash
+ls outputs/my_case/frame_*.h5 | tail -5
+```
+
+To confirm the simulation time a given frame holds before committing to it:
+
+```bash
+python -c "import h5py; print(h5py.File('outputs/my_case/frame_001242.h5').attrs['time'])"
+```
+
+**4. Point the case file at that checkpoint.** Set the `"restart"` key in `config.json`. **The path
+is resolved relative to the directory you launch `main.py` from** — that is `CFDPY/` (or
+`CFDPYGPU/`), not the case folder — so the usual form mirrors `output_dir`:
+
+```json
+{
+    "restart": "outputs/my_case/frame_001242.h5"
+}
+```
+
+**5. Extend `tfinal` past the checkpoint time.** The time loop runs `while time < tfinal`, so if
+`tfinal` is still the value the checkpoint already reached, the run will load the state and exit
+immediately without stepping. To continue a 1.2 s checkpoint to 4.0 s:
+
+```json
+{
+    "restart": "outputs/my_case/frame_001242.h5",
+    "tfinal": 4.0
+}
+```
+
+**6. Re-run the same command.** No CLI flag is involved — the `"restart"` key alone selects the
+resume path over a fresh `initialize()`:
+
+```bash
+python main.py examples/my_case/config.json
+```
+
+**7. Clear `"restart"` when you want a clean run from *t* = 0.** An empty string (the default)
+starts from the initial condition:
+
+```json
+{ "restart": "" }
+```
+
+### What the framework does on resume
+
+| Step | Behaviour |
+|---|---|
+| **Load state** | Reads `u, v, w, p, T, alpha` and the recorded time; seeds the time loop from that time rather than from zero. |
+| **Re-apply boundaries** | Velocity BCs and immersed-obstacle direct forcing are re-applied to the loaded field, exactly as `initialize()` does for a fresh one. |
+| **Continue numbering** | Scans `frame_*.h5` in `output_dir` and continues output numbering past the highest existing index, so **no previously written file is overwritten**. |
+| **Align the output grid** | The next output lands on the next multiple of `output_interval` at or after the loaded time, keeping the frame cadence consistent across the join. |
+| **Pre-load history** | Previously saved frames are loaded into the viewer and the existing `history.csv` rows into the run history, so the **final animations and history table span the whole run** (0 → `tfinal`), not just the resumed leg. |
+
+### Requirements and caveats
+
+- **`h5py` must be installed** — it is in [`CFDPY/requirements.txt`](CFDPY/requirements.txt) under
+  the recommended extras. Without it there are no checkpoints to resume from.
+- **The mesh must match.** The fields are loaded into the new run's arrays without a shape check,
+  so `Nx`, `Ny`, `Nz` (and the domain size) must be identical to the run that wrote the
+  checkpoint. Resuming onto a different mesh will fail or produce meaningless results — it is not
+  an interpolating restart.
+- **A missing path is fatal, not a fallback.** If `"restart"` names a file that does not exist the
+  run aborts when it tries to open it; it does *not* silently start from scratch. This is why a
+  fresh clone must clear the `"restart"` key shipped in the liquid-drop splash case (see
+  [CFD Simulator — CFDPy](#cfd-simulator--cfdpy)).
+- **All frames in `output_dir` are pre-loaded, including any later than your restart point.** If
+  you are deliberately rewinding to redo a leg, delete the frames after the chosen checkpoint
+  first, or the discarded ones will still appear in the final animations and history.
+- **Physics and numerics settings may be changed on resume** (`tfinal`, `output_interval`,
+  `cfl_max`, the convection scheme, and so on) — only the mesh is fixed. Changing the physics
+  mid-run is legitimate for staged setups but makes the joined history non-uniform, so record what
+  you changed.
+- **The GPU variant behaves identically**: checkpoints are interchangeable between `CFDPY/` and
+  `CFDPYGPU/` for the same mesh, since both write the same HDF5 layout.
 
 ---
 

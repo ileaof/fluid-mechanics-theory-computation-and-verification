@@ -266,6 +266,22 @@ This is how the splash case above was extended from 1.2 s to 4.0 s without
 recomputing the first leg.  Leave `"restart"` empty (the default) to start a
 case from scratch.
 
+Three things to remember when resuming:
+
+1. **`save_hdf5` must have been on** for the earlier leg (and `h5py` installed),
+   or there are no checkpoints to resume from; `output_interval` sets how often
+   they are written.
+2. **Extend `tfinal` past the checkpoint time.**  The loop runs
+   `while time < tfinal`, so resuming a 1.2 s checkpoint with `tfinal` still at
+   1.2 s loads the state and exits without stepping.
+3. **The path is relative to the directory you launch `main.py` from** (`CFDPY/`),
+   not to the case folder — the same convention as `output_dir`.  A path that
+   does not exist aborts the run; it does not silently start from scratch.
+
+> 📄 The complete step-by-step procedure, including how to pick a checkpoint and
+> what the framework does on resume, is in the root
+> [README — Restarting a Simulation from a Checkpoint](../README.md#restarting-a-simulation-from-a-checkpoint).
+
 #### Velocity animation & the streamline hang
 
 `finalize()` renders a velocity animation with `MatplotlibViewer.animate_flow`.
