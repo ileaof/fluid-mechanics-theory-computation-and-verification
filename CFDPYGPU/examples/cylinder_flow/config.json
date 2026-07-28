@@ -25,6 +25,7 @@
 
     "boussinesq": false,
     "use_vof": false,
+    "solve_energy": false,
 
     "convection": "tvd",
     "limiter": "vanleer",

@@ -138,6 +138,19 @@ class Config:
     boussinesq: bool = False
     t_ref: float = 300.0
 
+    # -- Energy (temperature) transport ------------------------------------
+    # Solve the temperature advection-diffusion equation each step.  For a
+    # genuinely isothermal case -- no conduction (``k == 0``), no buoyancy
+    # feedback (``boussinesq`` off) and a uniform initial temperature -- the
+    # temperature carries no physics and is a passive scalar.  On a collocated
+    # mesh advecting that scalar with the cell-to-face averaged velocity is not
+    # discretely divergence-free (only the projected face flux is), so a uniform
+    # field drifts by hundreds of K over a long run for no physical reason.
+    # Set this to ``false`` for such cases: T stays at its initial value, which
+    # is the exact physical answer.  Defaults to ``true`` for backward
+    # compatibility with the thermal examples.
+    solve_energy: bool = True
+
     # -- Boundary conditions ------------------------------------------------
     velocity_bc: dict[str, BoundarySpec] = field(default_factory=dict)
     pressure_bc: dict[str, BoundarySpec] = field(default_factory=dict)

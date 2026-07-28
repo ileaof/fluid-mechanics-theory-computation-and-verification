@@ -436,9 +436,12 @@ class Simulation:
         # clamp the velocity inside any immersed solid (direct forcing)
         self._apply_obstacle(s.u, s.v, s.w)
 
-        # Energy step (only if temperature is part of the physics -- it always is
-        # here, but a pure-isothermal case can keep T constant).
-        s.T = self.energy.step(s.T, s.u, s.v, s.w, dt)
+        # Energy step.  Skipped for a genuinely isothermal case (no conduction,
+        # no buoyancy feedback, uniform T): there the temperature is a passive
+        # scalar and advecting it on the collocated mesh only injects a spurious
+        # non-divergence-free drift, so keeping T constant is the exact answer.
+        if self.cfg.solve_energy:
+            s.T = self.energy.step(s.T, s.u, s.v, s.w, dt)
 
         # VOF transport
         if self.vof is not None and s.alpha is not None:
