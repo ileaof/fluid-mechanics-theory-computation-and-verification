@@ -1,0 +1,25 @@
+# Simulation output (large binaries: mp4, hdf5, csv, tecplot, png frames)
+outputs/
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Ad-hoc debug / scratch artifacts
+_vel_check.json
+_vel_out.txt
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+
+# Claude Code local (machine-specific) settings
+.claude/settings.local.json
