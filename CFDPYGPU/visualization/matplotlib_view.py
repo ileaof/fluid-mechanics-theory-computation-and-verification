@@ -16,10 +16,90 @@ post-processing a saved HDF5 history.
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+
+
+# Cached path to the first *usable* ffmpeg found, or "" if none (see
+# :func:`_usable_ffmpeg`).  ``None`` = not yet probed.
+_ffmpeg_path_cache: str | None = None
+
+
+def _probe_ffmpeg(path: str) -> bool:
+    """Return ``True`` if ``path`` is an ffmpeg that accepts ``-framerate``.
+
+    Matplotlib's :class:`~matplotlib.animation.FFMpegWriter` drives ffmpeg with
+    the ``-framerate`` input option, which only modern builds accept.  Some
+    third-party bundles ship an ancient ffmpeg (e.g. Tecplot 360's
+    ``SVN-r434``, circa 2008) that rejects it with *"Unrecognized option
+    'framerate'"*, prints that to the console, and makes a successful GIF
+    fallback look like a failure.  ``-framerate 1 -h`` exits 0 on a modern
+    build and non-zero on the ancient one; output is captured so the
+    rejection never leaks.
+    """
+    try:
+        r = subprocess.run([path, "-framerate", "1", "-h"],
+                           capture_output=True, timeout=15)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _usable_ffmpeg() -> str | None:
+    """Return the path of the first *usable* ffmpeg, or ``None``.
+
+    We must NOT trust plain ``shutil.which("ffmpeg")``: on Windows the machine
+    PATH is prepended to the user PATH, so a broken bundled ffmpeg (Tecplot)
+    can shadow a good one (Gyan) that the user installed on their user PATH.
+    Instead every ``ffmpeg``/``ffmpeg.exe`` on ``PATH`` is probed in order and
+    the first that accepts ``-framerate`` wins.  An explicit ``CFDPY_FFMPEG``
+    environment variable, if set, is tried first and overrides the search.
+
+    The result is cached for the process.  When a usable ffmpeg is found it is
+    also published to ``matplotlib.rcParams['animation.ffmpeg_path']`` so the
+    :class:`FFMpegWriter` uses *that* binary rather than re-resolving PATH.
+    """
+    global _ffmpeg_path_cache
+    if _ffmpeg_path_cache is not None:
+        return _ffmpeg_path_cache or None
+    exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    candidates: list[str] = []
+    override = os.environ.get("CFDPY_FFMPEG")
+    if override:
+        candidates.append(override)
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if not d:
+            continue
+        cand = os.path.join(d, exe)
+        if os.path.isfile(cand):
+            candidates.append(os.path.abspath(cand))
+    chosen: str | None = None
+    seen: set[str] = set()
+    for cand in candidates:
+        key = os.path.normcase(os.path.abspath(cand))
+        if key in seen:
+            continue
+        seen.add(key)
+        if _probe_ffmpeg(cand):
+            chosen = cand
+            break
+    _ffmpeg_path_cache = chosen or ""
+    if chosen:
+        try:
+            import matplotlib as mpl
+            mpl.rcParams["animation.ffmpeg_path"] = chosen
+        except Exception:
+            pass
+    return chosen
+
+
+def _ffmpeg_usable() -> bool:
+    """Return ``True`` if a usable ffmpeg was found (cached; see
+    :func:`_usable_ffmpeg`)."""
+    return _usable_ffmpeg() is not None
 
 
 @dataclass
@@ -155,10 +235,12 @@ class MatplotlibViewer:
                                            interval=1000 / self.fps,
                                            blit=False)
             path = os.path.join(self.output_dir, fname)
-            # Prefer an MP4 (mpeg4 codec, broadly available); fall back to a
-            # pillow-written GIF when ffmpeg / the codec is missing.
+            # Prefer an MP4 (mpeg4 codec) when a usable ffmpeg is present; fall
+            # back to a dependency-free Pillow GIF otherwise.  The capability
+            # probe avoids invoking a broken bundled ffmpeg (which would print
+            # a misleading "Unrecognized option 'framerate'" to the console).
             written = False
-            if self.save_mp4:
+            if self.save_mp4 and _ffmpeg_usable():
                 try:
                     writer = animation.FFMpegWriter(fps=self.fps, codec="mpeg4")
                     anim.save(path, dpi=self.dpi, writer=writer)
@@ -314,7 +396,7 @@ class MatplotlibViewer:
                                            blit=False)
             path = os.path.join(self.output_dir, fname)
             written = False
-            if self.save_mp4:
+            if self.save_mp4 and _ffmpeg_usable():
                 try:
                     writer = animation.FFMpegWriter(fps=self.fps, codec="mpeg4")
                     anim.save(path, dpi=self.dpi, writer=writer)
