@@ -118,7 +118,15 @@ class EnergySolver:
             I = sp.eye(N, format="csr")
             M = I - coeff * L
         rhs = T.ravel().copy() - dt * adv.ravel()
-        rhs += self.theta * dt * alpha * Lrhs
+        # The Dirichlet boundary data (Lrhs, the known wall-value contribution
+        # folded out of the ghost-cell Laplacian) is time-independent, so it
+        # enters at *both* time levels and is scaled by the full dt*alpha -- NOT
+        # by theta.  Only the Laplacian *operator* part (L @ T) is theta-split
+        # between the implicit (n+1) and explicit (n) levels.  Scaling Lrhs by
+        # theta under-applies a fixed-temperature wall by the implicit fraction
+        # (e.g. halving it for Crank-Nicolson), which pins the wall cell near its
+        # old value and starves the buoyancy driving natural convection.
+        rhs += dt * alpha * Lrhs
         if self.theta < 1.0:
             rhs += (1.0 - self.theta) * dt * alpha * (L @ T.ravel())
         x = self.ls.solve(M, rhs, x0=T.ravel())

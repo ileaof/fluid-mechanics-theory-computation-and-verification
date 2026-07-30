@@ -198,9 +198,17 @@ header, a progress bar, and writes all configured outputs to the case's
 ### Example 1 — Natural convection in a square cavity
 
 A 1 m × 1 m cavity, **west wall hot (350 K)**, **east wall cold (300 K)**,
-**top/bottom adiabatic**, gravity pointing down, fluid initially at rest at
-the reference temperature `T_ref = 325 K`.  Boussinesq buoyancy drives a
-clockwise convection cell.
+**top/bottom adiabatic**, Earth gravity pointing down, fluid initially at
+rest at the reference temperature `T_ref = 325 K`.  This is the canonical
+differentially heated cavity (`Pr = ν/α = 0.71`,
+`Ra = g β ΔT L³/(ν α) = 1 × 10⁵`): a Boussinesq model fluid whose diffusivity
+is sized so the thermal boundary layer forms and the buoyancy drives a steady
+clockwise convection cell within the 8 s run, with all fields reported in
+dimensional SI units (temperature in K, velocity in m/s, pressure in Pa).
+(Real-property fluids such as water have a thermal diffusivity so small that,
+in a 1 m cavity, the conduction time `L²/α ≈ 7 × 10⁶ s` — the wall heat never
+penetrates and no convection develops on a seconds-long run; the model fluid
+makes the physics visible while keeping the output dimensional.)
 
 ```bash
 python main.py examples/natural_convection_2D/config.json

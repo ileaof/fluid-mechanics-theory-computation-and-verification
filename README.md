@@ -698,20 +698,33 @@ advection–diffusion, and gravity as a body force.
 is removed analytically (no row pinning, so the cached ILU factorisation stays valid);
 second-order central diffusion; selectable convection — upwind, central, QUICK, and TVD
 (vanleer / minmod / superbee / beam-warming / osher) with a Numba-JIT flux-limiter kernel and a
-pure-NumPy fallback; implicit Euler and Crank–Nicolson time schemes with adaptive CFL; Krylov
-solvers (CG, BiCGSTAB, GMRES) with optional ILU(0) preconditioning; immersed obstacles as
-blocked cells with direct forcing.
+pure-NumPy fallback; implicit Euler and Crank–Nicolson time schemes with adaptive CFL; Dirichlet
+walls baked into the cell-centred Laplacian via ghost cells (ghost = 2·V_wall − φ), with the
+*time-independent* boundary data applied at the **full** time step in the θ-split — only the
+Laplacian *operator* is divided between the implicit (θ) and explicit (1−θ) fractions, so a
+fixed-temperature or prescribed-velocity wall is enforced at both time levels rather than
+under-applied by the implicit fraction; Krylov solvers (CG, BiCGSTAB, GMRES) with optional
+ILU(0) preconditioning; immersed obstacles as blocked cells with direct forcing.
 
 **Software architecture.** A small, decoupled, SOLID/OOP package — `config`, `mesh`,
 `numerics` (stateless operators), `physics`, `solver` (boundary, linear, momentum, pressure,
 projection, energy, vof), and `visualization` — orchestrated by a single `Simulation` composition
 root. Every parameter lives in a JSON/YAML case file; nothing is hard-coded.
 
-**Supported physics & verification strategy.** Natural convection (Boussinesq cavity), dam
-break, backward-facing step, and the Harlow & Shannon liquid-drop splash are provided as
+**Supported physics & verification strategy.** Natural convection — the de Vahl Davis
+differentially heated cavity solved under the Boussinesq approximation at *Pr = ν/α = 0.71*
+and *Ra = g β ΔT L³/(ν α) = 1 × 10⁵* (west wall 350 K, east wall 300 K, adiabatic top and
+bottom, Earth gravity, fluid initially at rest at *T_ref = 325 K*), with every field reported
+in dimensional SI units (temperature in K, velocity in m/s, pressure in Pa) — together with
+dam break, backward-facing step, and the Harlow & Shannon liquid-drop splash are provided as
 ready-to-run examples and double as verification cases against the benchmarks developed in
-Chapters 11 and 13. Verification relies on the grid-convergence, Richardson, and GCI machinery
-of Chapter 12, applied to the same finite-volume operators CFDPy uses.
+Chapters 11 and 13. The model fluid's diffusivity is sized so the thermal boundary layer
+forms and the buoyancy drives a steady convection cell within the 8 s run; real-property fluids
+such as water have a thermal diffusivity so small (*α ≈ 1.4 × 10⁻⁷ m²/s*) that, in a 1 m
+cavity, the conduction time *L²/α ≈ 7 × 10⁶ s* dwarfs any seconds-long integration, so the
+dimensional relabelling keeps the output in SI while making the physics visible. Verification
+relies on the grid-convergence, Richardson, and GCI machinery of Chapter 12, applied to the
+same finite-volume operators CFDPy uses.
 
 **Post-processing & output files.** Two independent visualisation systems — Matplotlib
 (pressure/temperature/velocity contours, quiver, streamlines, VOF interface, MP4/GIF

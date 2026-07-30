@@ -7,16 +7,16 @@
     "Ly": 1.0,
     "Lz": 1.0,
 
-    "dt": 0.02,
-    "tfinal": 5.0,
+    "dt": 0.01,
+    "tfinal": 8.0,
     "time_scheme": "crank-nicolson",
     "adaptive_dt": false,
 
-    "rho": 1000.0,
-    "mu": 0.01,
-    "cp": 4180.0,
-    "k": 0.6,
-    "beta": 2.0e-4,
+    "rho": 1.0,
+    "mu": 2.13e-3,
+    "cp": 1.0,
+    "k": 3.0e-3,
+    "beta": 1.3038e-3,
     "t_ref": 325.0,
     "gravity": [0.0, -9.81, 0.0],
 
@@ -54,7 +54,7 @@
     "w0": 0.0,
 
     "output_dir": "outputs/natural_convection_2D",
-    "output_interval": 0.2,
+    "output_interval": 0.4,
     "save_csv": true,
     "save_hdf5": true,
     "save_tecplot": true,

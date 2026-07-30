@@ -189,8 +189,13 @@ class MomentumSolver:
             M = I - coeff * L
         rhs = field.ravel().copy()
         rhs += dt * (-conv.ravel() + src.ravel())
-        # implicit-diffusion boundary contribution (Dirichlet walls)
-        rhs += self.theta * dt * nu * Lrhs
+        # implicit-diffusion boundary contribution (Dirichlet walls/inlets).  The
+        # known boundary data (Lrhs) is time-independent, so it enters at both
+        # time levels and is scaled by the full dt*nu -- NOT by theta.  Scaling
+        # it by theta would under-apply a nonzero Dirichlet velocity (e.g. an
+        # inlet) by the implicit fraction.  No-slip walls have Lrhs == 0 so this
+        # only matters for prescribed-velocity (inlet) boundaries.
+        rhs += dt * nu * Lrhs
         # explicit part of CN diffusion: + (1-theta) dt nu L u^n  added to rhs
         if self.theta < 1.0:
             rhs += (1.0 - self.theta) * dt * nu * (L @ field.ravel())
