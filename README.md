@@ -1589,7 +1589,7 @@ If you use this repository or the CFDPy simulator in your teaching, research, or
 please cite the textbook:
 
 > Ferreira, I. L. *Fluid Mechanics: Theory, Computation, and Verification — A Finite-Volume
-> Approach with Python.* Companion repository, 2026.
+> Approach with Python.* 2026. ISBN 979-8189724145.
 
 and refer to the simulators' own documentation for the methods implemented:
 
@@ -1608,6 +1608,7 @@ and refer to the simulators' own documentation for the methods implemented:
   title     = {Fluid Mechanics: Theory, Computation, and Verification ---
                A Finite-Volume Approach with Python},
   year      = {2026},
+  isbn      = {979-8189724145},
   note      = {Companion Python repository, CFDPy and CFDPyGPU simulators},
   url       = {https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification}
 }
