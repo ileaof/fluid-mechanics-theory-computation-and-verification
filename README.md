@@ -1588,8 +1588,8 @@ computational practice.
 If you use this repository or the CFDPy simulator in your teaching, research, or publications,
 please cite the textbook:
 
-> *Fluid Mechanics: Theory, Computation, and Verification — A Finite-Volume Approach with
-> Python.* Companion repository, 2026.
+> Ferreira, I. L. *Fluid Mechanics: Theory, Computation, and Verification — A Finite-Volume
+> Approach with Python.* Companion repository, 2026.
 
 and refer to the simulators' own documentation for the methods implemented:
 
@@ -1604,7 +1604,7 @@ and refer to the simulators' own documentation for the methods implemented:
 
 ```bibtex
 @book{FluidMechanicsFVM2026,
-  author    = {ileaof},
+  author    = {Ferreira, I. L.},
   title     = {Fluid Mechanics: Theory, Computation, and Verification ---
                A Finite-Volume Approach with Python},
   year      = {2026},
@@ -1613,7 +1613,7 @@ and refer to the simulators' own documentation for the methods implemented:
 }
 
 @software{CFDPy2026,
-  author       = {ileaof},
+  author       = {Ferreira, I. L.},
   title        = {{CFDPy} -- a modular finite-volume CFD framework in Python},
   year         = {2026},
   howpublished = {Companion code to \emph{Fluid Mechanics: Theory,
@@ -1622,7 +1622,7 @@ and refer to the simulators' own documentation for the methods implemented:
 }
 
 @software{CFDPyGPU2026,
-  author       = {ileaof},
+  author       = {Ferreira, I. L.},
   title        = {{CFDPyGPU} -- a Numba-CUDA-accelerated finite-volume CFD
                   framework in Python},
   year         = {2026},
@@ -1631,9 +1631,6 @@ and refer to the simulators' own documentation for the methods implemented:
   url          = {https://github.com/ileaof/fluid-mechanics-theory-computation-and-verification/tree/main/CFDPYGPU}
 }
 ```
-
-> **Note on the `author` field.** Replace `ileaof` with the full author name when the book is
-> published; the repository currently records only the maintainer's GitHub handle.
 
 ### License
 
@@ -1671,7 +1668,8 @@ Toro, Roache, and LeVeque.
 
 ### Author and Contact
 
-This repository is written and maintained by **[@ileaof](https://github.com/ileaof)**, author of
+This repository is written and maintained by **I. L. Ferreira**
+([@ileaof](https://github.com/ileaof)), author of
 *Fluid Mechanics: Theory, Computation, and Verification — A Finite-Volume Approach with Python*.
 The book, the thirty-nine chapter programs, and both simulator packages (CFDPy and CFDPyGPU) are
 the work of a single author; the benchmark data and classical methods they are verified against
