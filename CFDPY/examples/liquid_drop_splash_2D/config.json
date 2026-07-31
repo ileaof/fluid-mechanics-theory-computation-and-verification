@@ -9,7 +9,7 @@
     "Lz": 1.0,
 
     "dt": 0.002,
-    "tfinal": 4.0,
+    "tfinal": 8.0,
     "time_scheme": "implicit",
     "adaptive_dt": true,
     "cfl_max": 0.3,
@@ -61,7 +61,7 @@
     "drop_y": 1.1,
     "drop_r": 0.10,
 
-    "restart": "outputs/liquid_drop_splash_2D/frame_001242.h5",
+    "restart": "",
     "flow_streamlines": false,
 
     "t0": 293.15,
