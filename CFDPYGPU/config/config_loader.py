@@ -82,26 +82,26 @@ class Config:
     Nx: int = 64
     Ny: int = 64
     Nz: int = 1
-    Lx: float = 1.0
-    Ly: float = 1.0
-    Lz: float = 1.0
+    Lx: float = 1.0              # domain length in x             [m]
+    Ly: float = 1.0              # domain length in y             [m]
+    Lz: float = 1.0              # domain length in z             [m]
 
-    # -- Time integration ---------------------------------------------------
-    dt: float = 0.001
-    tfinal: float = 10.0
+    # -- Time integration (all times in seconds [s]) ----------------------
+    dt: float = 0.001            # time step                      [s]
+    tfinal: float = 10.0         # final simulation time          [s]
     time_scheme: str = "crank-nicolson"  # "implicit" | "crank-nicolson" | "explicit"
     adaptive_dt: bool = False
-    cfl_max: float = 0.5
-    dt_min: float = 1e-7
-    dt_max: float = 1e-2
+    cfl_max: float = 0.5         # target max Courant number      [-]
+    dt_min: float = 1e-7         # adaptive-dt lower bound         [s]
+    dt_max: float = 1e-2         # adaptive-dt upper bound         [s]
 
-    # -- Physical properties (single-phase defaults) -----------------------
-    rho: float = 1000.0          # density            [kg/m^3]
-    mu: float = 1.0e-3           # dynamic viscosity  [Pa.s]
-    cp: float = 4180.0           # specific heat      [J/(kg.K)]
-    k: float = 0.6               # thermal cond.      [W/(m.K)]
-    beta: float = 0.0             # thermal expansion [1/K] (Boussinesq)
-    gravity: tuple[float, float, float] = (0.0, -9.81, 0.0)
+    # -- Physical properties (coherent SI; defaults = water @ ~20 C) -------
+    rho: float = 1000.0          # density                        [kg/m^3]
+    mu: float = 1.0e-3           # dynamic viscosity              [Pa*s]
+    cp: float = 4180.0           # specific heat capacity         [J/(kg*K)]
+    k: float = 0.6               # thermal conductivity           [W/(m*K)]
+    beta: float = 0.0            # volumetric thermal expansion   [1/K]
+    gravity: tuple[float, float, float] = (0.0, -9.81, 0.0)  # accel. [m/s^2]
 
     # -- Numerics -----------------------------------------------------------
     convection: str = "upwind"    # "upwind" | "central" | "quick" | "tvd"
@@ -136,7 +136,16 @@ class Config:
 
     # -- Gravity / buoyancy -------------------------------------------------
     boussinesq: bool = False
-    t_ref: float = 300.0
+    t_ref: float = 300.0          # Boussinesq reference temperature [K]
+
+    # -- Non-dimensionalisation (SI-policy exception) ----------------------
+    # Default policy is coherent SI everywhere.  A case posed in non-dimensional
+    # (unit-scaled) variables -- e.g. the cylinder benchmark sets rho=1, U=1,
+    # D=1 so Re=1/mu -- must declare it here or the SI validator
+    # (units.validate_config) reports it.  ``reference_scales`` names the scales
+    # used so a reader can recover dimensional values.
+    nondimensional: bool = False
+    reference_scales: dict = field(default_factory=dict)
 
     # -- Energy (temperature) transport ------------------------------------
     # Solve the temperature advection-diffusion equation each step.  For a
@@ -157,12 +166,12 @@ class Config:
     temperature_bc: dict[str, BoundarySpec] = field(default_factory=dict)
 
     # -- Initial conditions -------------------------------------------------
-    u0: float = 0.0
-    v0: float = 0.0
-    w0: float = 0.0
-    t0: float = 300.0
+    u0: float = 0.0               # initial x-velocity             [m/s]
+    v0: float = 0.0               # initial y-velocity             [m/s]
+    w0: float = 0.0               # initial z-velocity             [m/s]
+    t0: float = 300.0             # initial (uniform) temperature  [K]
     alpha_init: str = "uniform"   # "uniform" | "dam_break" | "block" | "splash_drop"
-    alpha_value: float = 0.0      # background phase (0 = light, 1 = heavy)
+    alpha_value: float = 0.0      # background VOF fraction (0 = light, 1 = heavy) [-]
 
     # Splash-of-a-liquid-drop initial shape (used when alpha_init == "splash_drop"):
     # a circular heavy-phase drop suspended in the light phase above a liquid
@@ -175,7 +184,7 @@ class Config:
 
     # -- Output -------------------------------------------------------------
     output_dir: str = "outputs"
-    output_interval: float = 0.1  # wall-time interval between frames
+    output_interval: float = 0.1  # simulation-time between output frames [s]
     save_csv: bool = True
     save_hdf5: bool = True
     save_tecplot: bool = True

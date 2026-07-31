@@ -36,6 +36,16 @@ import os
 
 import numpy as np
 
+# Single source of truth for SI unit labels (see units.py).  Import is defensive
+# so the exporter still works if the module is ever vendored without units.py.
+try:
+    from units import label as _si_label, FIELD_UNITS as _FIELD_UNITS
+except Exception:                       # pragma: no cover
+    _FIELD_UNITS = {}
+
+    def _si_label(name, pretty=None):   # type: ignore[misc]
+        return pretty if pretty is not None else name
+
 
 class TecplotExporter:
     """Write Tecplot 360 ASCII ``.dat`` files for each snapshot."""
@@ -60,8 +70,11 @@ class TecplotExporter:
         if alpha is None:
             alpha = np.zeros_like(u)
 
-        varnames = ["X", "Y", "Z", "U", "V", "W",
-                    "Pressure", "Temperature", "Alpha"]
+        # Variable names carry their coherent-SI unit in brackets (policy: every
+        # exported dimensional quantity states its SI unit).  Tecplot 360 and the
+        # py2tec round-trip both accept quoted names containing brackets.
+        varnames = [_si_label(n) for n in ("X", "Y", "Z", "U", "V", "W",
+                                           "Pressure", "Temperature", "Alpha")]
         zonename = f"t={time:.6f}"
         # Modern ORDERED zone header (py2tec dialect): ZONETYPE=ORDERED with
         # DATAPACKING=POINT -- no legacy F=POINT token.  STRANDID groups the
@@ -110,7 +123,10 @@ class TecplotExporter:
         rows = np.stack([X, Y, Z, u.ravel(order="F"), v.ravel(order="F"),
                          w.ravel(order="F"), p.ravel(order="F"),
                          T.ravel(order="F"), alpha.ravel(order="F")], axis=1)
-        header = "x,y,z,u,v,w,p,T,alpha"
+        # Column headers annotated with coherent-SI units (alpha is the
+        # dimensionless VOF fraction -> "[-]").
+        header = ",".join(_si_label(c) for c in
+                          ("x", "y", "z", "u", "v", "w", "p", "T", "alpha"))
         np.savetxt(path, rows, delimiter=",", header=header, comments="")
         return path
 
@@ -123,11 +139,18 @@ class TecplotExporter:
             fname = f"frame_{time:08.4f}.h5"
         path = os.path.join(self.output_dir, fname)
         with h5py.File(path, "w") as fh:
+            # Record the SI unit of the time attribute and every field dataset
+            # as HDF5 metadata.  Dataset *names* are unchanged, so the restart
+            # path (which reads u/v/w/p/T/alpha by name) is unaffected; the units
+            # are attached non-intrusively as a `units` attribute per dataset.
             fh.attrs["time"] = time
+            fh.attrs["time_units"] = "s"
+            fh.attrs["unit_system"] = "SI (coherent)"
             for key, val in fields.items():
                 if val is not None and isinstance(val, np.ndarray):
-                    fh.create_dataset(key, data=val)
-            fh.create_dataset("X", data=self.mesh.Xc)
-            fh.create_dataset("Y", data=self.mesh.Yc)
-            fh.create_dataset("Z", data=self.mesh.Zc)
+                    ds = fh.create_dataset(key, data=val)
+                    ds.attrs["units"] = _FIELD_UNITS.get(key, "")
+            for axis in ("X", "Y", "Z"):
+                ds = fh.create_dataset(axis, data=getattr(self.mesh, f"{axis}c"))
+                ds.attrs["units"] = "m"
         return path

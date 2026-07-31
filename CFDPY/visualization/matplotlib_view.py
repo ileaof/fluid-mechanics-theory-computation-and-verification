@@ -21,6 +21,13 @@ from typing import Any
 
 import numpy as np
 
+# Single source of truth for SI axis / colour-bar labels (see units.py).
+try:
+    from units import label as _si_label
+except Exception:                       # pragma: no cover
+    def _si_label(name, pretty=None):   # type: ignore[misc]
+        return pretty if pretty is not None else name
+
 
 @dataclass
 class Frame:
@@ -88,7 +95,7 @@ class MatplotlibViewer:
         F = field[:, :, 0] if field.ndim == 3 else field
         pcm = ax.pcolormesh(self.X, self.Y, F, shading="nearest", cmap=cmap,
                             vmin=vmin, vmax=vmax)
-        fig.colorbar(pcm, ax=ax, label=title)
+        fig.colorbar(pcm, ax=ax, label=_si_label(title))
         if vectors is not None:
             u, v = vectors
             U = u[:, :, 0] if u.ndim == 3 else u
@@ -114,8 +121,8 @@ class MatplotlibViewer:
             ax.contour(self.X, self.Y, A, levels=[0.5], colors="red",
                        linewidths=1.5)
         ax.set_aspect("equal")
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
+        ax.set_xlabel(_si_label("x"))
+        ax.set_ylabel(_si_label("y"))
         ax.set_title(title)
         fig.tight_layout()
         path = os.path.join(self.output_dir, fname)
@@ -139,7 +146,7 @@ class MatplotlibViewer:
             vmin, vmax = None, None
         pcm = ax.pcolormesh(self.X, self.Y, first[:, :, 0], shading="nearest",
                             cmap=cmap, vmin=vmin, vmax=vmax)
-        fig.colorbar(pcm, ax=ax, label=title or key)
+        fig.colorbar(pcm, ax=ax, label=_si_label(title or key))
         txt = ax.set_title("")
 
         def update(i):
@@ -254,7 +261,7 @@ class MatplotlibViewer:
                else self._flow_bg(self.frames[0].fields, background))
         pcm = ax.pcolormesh(self.X, self.Y, bg0, shading="nearest", cmap=cmap,
                             vmin=vmin, vmax=vmax)
-        fig.colorbar(pcm, ax=ax, label=title or background)
+        fig.colorbar(pcm, ax=ax, label=_si_label(title or background))
 
         # Quiver overlay (created once, updated each frame with set_UVC).
         step = quiver_step or max(1, self.mesh.Nx // 25)
@@ -274,8 +281,8 @@ class MatplotlibViewer:
         stream_arts: list = []
         txt = ax.set_title("")
         ax.set_aspect("equal")
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
+        ax.set_xlabel(_si_label("x"))
+        ax.set_ylabel(_si_label("y"))
 
         def _clear_stream() -> None:
             for art in stream_arts:

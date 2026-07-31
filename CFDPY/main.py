@@ -543,19 +543,31 @@ class Simulation:
 
     # ------------------------------------------------------------------ #
     def _header(self) -> str:
+        # All dimensional quantities in the banner carry their coherent-SI unit,
+        # and the SI compliance of the case file is checked and reported here
+        # (units.validate_config) so any non-SI / undocumented parameter surfaces
+        # before the run starts.
+        try:
+            from units import validate_config, format_issues
+            si = "\n" + format_issues(validate_config(self.cfg)) + "\n"
+        except Exception:
+            si = ""
         return (f"\n=== CFDPy simulation: {self.cfg.name} ===\n"
                 f"{self.mesh}\n"
-                f"dt={self.cfg.dt}, tfinal={self.cfg.tfinal}, "
+                f"dt={self.cfg.dt} s, tfinal={self.cfg.tfinal} s, "
                 f"scheme={self.cfg.convection}, time={self.cfg.time_scheme}, "
                 f"solver={self.cfg.linear_solver}\n"
                 f"VOF={'on' if self.cfg.use_vof else 'off'}, "
-                f"Boussinesq={'on' if self.cfg.boussinesq else 'off'}\n")
+                f"Boussinesq={'on' if self.cfg.boussinesq else 'off'}, "
+                f"units=SI (coherent)\n"
+                f"{si}")
 
     def _summary(self) -> str:
         s = self.state
         return (f"\n=== {self.cfg.name} finished ===\n"
-                f"steps={self.step_count}, t={self.time:.4f}s\n"
-                f"max|u|={np.abs(s.u).max():.4e}, max|v|={np.abs(s.v).max():.4e}\n"
+                f"steps={self.step_count}, t={self.time:.4f} s\n"
+                f"max|u|={np.abs(s.u).max():.4e} m/s, "
+                f"max|v|={np.abs(s.v).max():.4e} m/s\n"
                 f"outputs in: {self.cfg.output_dir}\n")
 
 

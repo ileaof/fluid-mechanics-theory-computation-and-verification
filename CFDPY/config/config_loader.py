@@ -79,29 +79,33 @@ class Config:
     """
 
     # -- Mesh ---------------------------------------------------------------
-    Nx: int = 64
-    Ny: int = 64
-    Nz: int = 1
-    Lx: float = 1.0
-    Ly: float = 1.0
-    Lz: float = 1.0
+    # All lengths are in metres [m]; the mesh spacing dx=Lx/Nx etc. is likewise
+    # in [m].  Cell counts Nx/Ny/Nz are dimensionless integers.
+    Nx: int = 64                 # cells in x                     [-]
+    Ny: int = 64                 # cells in y                     [-]
+    Nz: int = 1                  # cells in z (1 => 2-D)          [-]
+    Lx: float = 1.0              # domain length in x             [m]
+    Ly: float = 1.0              # domain length in y             [m]
+    Lz: float = 1.0              # domain length in z             [m]
 
     # -- Time integration ---------------------------------------------------
-    dt: float = 0.001
-    tfinal: float = 10.0
+    # All times are in seconds [s].
+    dt: float = 0.001            # time step                      [s]
+    tfinal: float = 10.0         # final simulation time          [s]
     time_scheme: str = "crank-nicolson"  # "implicit" | "crank-nicolson" | "explicit"
     adaptive_dt: bool = False
-    cfl_max: float = 0.5
-    dt_min: float = 1e-7
-    dt_max: float = 1e-2
+    cfl_max: float = 0.5         # target max Courant number      [-]
+    dt_min: float = 1e-7         # adaptive-dt lower bound         [s]
+    dt_max: float = 1e-2         # adaptive-dt upper bound         [s]
 
     # -- Physical properties (single-phase defaults) -----------------------
-    rho: float = 1000.0          # density            [kg/m^3]
-    mu: float = 1.0e-3           # dynamic viscosity  [Pa.s]
-    cp: float = 4180.0           # specific heat      [J/(kg.K)]
-    k: float = 0.6               # thermal cond.      [W/(m.K)]
-    beta: float = 0.0             # thermal expansion [1/K] (Boussinesq)
-    gravity: tuple[float, float, float] = (0.0, -9.81, 0.0)
+    # Coherent SI throughout.  Defaults are liquid water at ~20 C.
+    rho: float = 1000.0          # density                        [kg/m^3]
+    mu: float = 1.0e-3           # dynamic viscosity              [Pa*s]
+    cp: float = 4180.0           # specific heat capacity         [J/(kg*K)]
+    k: float = 0.6               # thermal conductivity           [W/(m*K)]
+    beta: float = 0.0            # volumetric thermal expansion   [1/K]
+    gravity: tuple[float, float, float] = (0.0, -9.81, 0.0)  # accel. [m/s^2]
 
     # -- Numerics -----------------------------------------------------------
     convection: str = "upwind"    # "upwind" | "central" | "quick" | "tvd"
@@ -120,14 +124,26 @@ class Config:
 
     # -- Multiphase ---------------------------------------------------------
     use_vof: bool = False
-    rho_light: float = 1.2        # secondary phase density (air)
-    mu_light: float = 1.8e-5
-    sigma: float = 0.0            # surface tension [N/m]
+    rho_light: float = 1.2        # secondary (light) phase density [kg/m^3]
+    mu_light: float = 1.8e-5      # secondary (light) phase viscosity [Pa*s]
+    sigma: float = 0.0            # surface tension                 [N/m]
     vof_reconstruct: str = "plic"  # "upwind" | "plic"
 
     # -- Gravity / buoyancy -------------------------------------------------
     boussinesq: bool = False
-    t_ref: float = 300.0
+    t_ref: float = 300.0          # Boussinesq reference temperature [K]
+
+    # -- Non-dimensionalisation (SI-policy exception) ----------------------
+    # The framework's default policy is *coherent SI everywhere*.  A case may
+    # instead be posed in non-dimensional (unit-scaled) variables -- e.g. the
+    # cylinder / backward-step benchmarks set rho=1, U=1, D=1 so that
+    # Re = rho*U*D/mu = 1/mu -- but ONLY if it declares that intent here.  The
+    # SI validator (units.validate_config) treats a case with non-physical
+    # property values as an *error* unless ``nondimensional`` is True, in which
+    # case it is accepted as a documented exception.  ``reference_scales`` names
+    # the scales used so a reader can recover dimensional values.
+    nondimensional: bool = False
+    reference_scales: dict = field(default_factory=dict)  # e.g. {"L":..,"U":..,"rho":..,"dT":..}
 
     # -- Energy (temperature) transport ------------------------------------
     # Solve the temperature advection-diffusion equation each step.  For a
@@ -148,12 +164,12 @@ class Config:
     temperature_bc: dict[str, BoundarySpec] = field(default_factory=dict)
 
     # -- Initial conditions -------------------------------------------------
-    u0: float = 0.0
-    v0: float = 0.0
-    w0: float = 0.0
-    t0: float = 300.0
+    u0: float = 0.0               # initial x-velocity             [m/s]
+    v0: float = 0.0               # initial y-velocity             [m/s]
+    w0: float = 0.0               # initial z-velocity             [m/s]
+    t0: float = 300.0             # initial (uniform) temperature  [K]
     alpha_init: str = "uniform"   # "uniform" | "dam_break" | "block" | "splash_drop"
-    alpha_value: float = 0.0      # background phase (0 = light, 1 = heavy)
+    alpha_value: float = 0.0      # background VOF fraction (0 = light, 1 = heavy) [-]
 
     # Splash-of-a-liquid-drop initial shape (used when alpha_init == "splash_drop"):
     # a circular heavy-phase drop suspended in the light phase above a liquid
@@ -166,7 +182,7 @@ class Config:
 
     # -- Output -------------------------------------------------------------
     output_dir: str = "outputs"
-    output_interval: float = 0.1  # wall-time interval between frames
+    output_interval: float = 0.1  # simulation-time between output frames [s]
     save_csv: bool = True
     save_hdf5: bool = True
     save_tecplot: bool = True

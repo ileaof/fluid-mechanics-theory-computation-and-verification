@@ -9,7 +9,7 @@
     "Lz": 1.0,
 
     "dt": 0.05,
-    "tfinal": 20.0,
+    "tfinal": 40.0,
     "time_scheme": "implicit",
     "adaptive_dt": true,
     "cfl_max": 0.3,
@@ -24,6 +24,13 @@
     "gravity": [0.0, 0.0, 0.0],
 
     "boussinesq": false,
+    "nondimensional": true,
+    "reference_scales": {
+        "note": "Unit-scaled benchmark: rho=1, U_inf=1, D=1 so Re = rho*U_inf*D/mu = 1/mu.",
+        "Re": 40, "length_scale": "D (cylinder diameter)", "velocity_scale": "U_inf (inlet)",
+        "density_scale": "rho", "to_SI": "multiply by chosen physical D[m], U_inf[m/s], rho[kg/m^3]"
+    },
+
     "use_vof": false,
     "solve_energy": false,
 

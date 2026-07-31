@@ -21,6 +21,13 @@
     "gravity": [0.0, -9.81, 0.0],
 
     "boussinesq": true,
+    "nondimensional": true,
+    "reference_scales": {
+        "note": "de Vahl Davis cavity in scaled variables: rho=1, cp=1, L=1; Pr=mu*cp/k, Ra=g*beta*dT*L^3/(nu*alpha).",
+        "Ra": 1.0e5, "Pr": 0.71, "length_scale": "L (cavity side)",
+        "temperature_scale": "dT = T_hot - T_cold [K]", "note2": "T is still reported in kelvin (SI)."
+    },
+
     "use_vof": false,
 
     "convection": "upwind",
