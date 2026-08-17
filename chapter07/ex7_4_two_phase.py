@@ -166,6 +166,68 @@ def flow_rate_upper():
 
 
 # ===========================================================================
+# Independent NUMERICAL solution: cell-centred finite volume
+# ===========================================================================
+# The momentum balance in conservative form is  d/dy( mu(y) du/dy ) = D(y),
+# with mu and the source D piecewise constant (one value per layer).  A
+# cell-centred finite-volume discretisation integrates this over each control
+# volume; the diffusive flux mu du/dy at each interior face uses the HARMONIC
+# MEAN of the two neighbouring cell viscosities (Patankar's practice).  The
+# harmonic mean is exactly what enforces the physical shear-stress (flux)
+# continuity across the water/oil interface without any special interface
+# treatment -- the same device used in Example 1.3.  No-slip walls enter through
+# the half-cell face gradient (u_wall = 0).  The result is a tridiagonal system
+# solved here by the Thomas algorithm (numpy only; no SciPy).
+def _thomas(a, b, c, d):
+    """Solve a tridiagonal system (sub a, diag b, super c, rhs d) in place."""
+    n = len(b)
+    cp = np.zeros(n)
+    dp = np.zeros(n)
+    cp[0] = c[0] / b[0]
+    dp[0] = d[0] / b[0]
+    for i in range(1, n):
+        m = b[i] - a[i] * cp[i - 1]
+        cp[i] = c[i] / m
+        dp[i] = (d[i] - a[i] * dp[i - 1]) / m
+    x = np.zeros(n)
+    x[-1] = dp[-1]
+    for i in range(n - 2, -1, -1):
+        x[i] = dp[i] - cp[i] * x[i + 1]
+    return x
+
+
+def solve_numeric(N):
+    """Finite-volume velocity on N cells across the gap.
+
+    Returns the cell centres ``yc`` [m] and the numerical velocity ``u`` [m/s].
+    ``N`` should be even so the fluid interface at ``y = h1`` (= H/2 for equal
+    layers) falls on a cell face; the harmonic-mean face viscosity then captures
+    the shear-continuity condition exactly at that face.
+    """
+    dy = H / N
+    yc = (np.arange(N) + 0.5) * dy
+    mu_c = np.where(yc < h1, mu1, mu2)          # per-cell viscosity  [Pa*s]
+    D_c = np.where(yc < h1, D1, D2)             # per-cell source     [Pa/m]
+    muL, muR = mu_c[:-1], mu_c[1:]
+    k_int = (2.0 * muL * muR / (muL + muR)) / dy   # interior-face conductances
+    k_wall_L = mu_c[0] / (0.5 * dy)             # half-cell gradient at each wall
+    k_wall_R = mu_c[-1] / (0.5 * dy)
+    a = np.zeros(N)      # sub-diagonal
+    b = np.zeros(N)      # diagonal
+    c = np.zeros(N)      # super-diagonal
+    d = D_c * dy         # right-hand side (integral of the source over a cell)
+    for j in range(N):
+        kw = k_wall_L if j == 0 else k_int[j - 1]
+        ke = k_wall_R if j == N - 1 else k_int[j]
+        b[j] = -(kw + ke)
+        if j > 0:
+            a[j] = k_int[j - 1]
+        if j < N - 1:
+            c[j] = k_int[j]
+    return yc, _thomas(a, b, c, d)
+
+
+# ===========================================================================
 # Derived engineering quantities
 # ===========================================================================
 u_interface = u_lower(h1)              # = u_upper(h1) by construction
@@ -362,6 +424,56 @@ assert all(checks), "two-phase analytical solution failed its verification"
 
 
 # ===========================================================================
+# Numerical solution and comparison with the analytical profile
+# ===========================================================================
+print("\n" + "=" * 82)
+print("NUMERICAL SOLUTION (cell-centred finite volume, harmonic-mean face "
+      "viscosity)")
+print("=" * 82)
+
+# Point comparison on a fine grid.
+N_fine = 200
+yc_f, u_f = solve_numeric(N_fine)
+u_exact_f = u_profile(yc_f)
+Linf_fine = float(np.max(np.abs(u_f - u_exact_f)))
+u_if_num = float(np.interp(h1, yc_f, u_f))         # interface (a face location)
+u_max_num = float(np.interp(y_umax, yc_f, u_f))    # velocity at the analytic peak
+print(f"  grid N = {N_fine}:  max|u_num - u_exact| = {Linf_fine:.3e} m/s (Linf)")
+print(f"  interface velocity : analytic {u_interface*1e3:8.4f} mm/s  |  "
+      f"numeric {u_if_num*1e3:8.4f} mm/s")
+print(f"  maximum velocity   : analytic {u_max*1e3:8.4f} mm/s  |  "
+      f"numeric {u_max_num*1e3:8.4f} mm/s")
+
+# Grid-refinement study: the scheme is 2nd-order, so the error should quarter
+# for every doubling of N (observed order p -> 2).
+print("\n  Grid-refinement study (Linf error against the analytical solution):")
+print(f"    {'N':>5} {'dy [mm]':>10} {'Linf err [m/s]':>16} {'order p':>9}")
+Ns = [20, 40, 80, 160, 320]
+prev_err = None
+orders = []
+for N in Ns:
+    ycN, uN = solve_numeric(N)
+    errN = float(np.max(np.abs(uN - u_profile(ycN))))
+    if prev_err is None:
+        p_str = "   --"
+    else:
+        p = np.log2(prev_err / errN)
+        orders.append(p)
+        p_str = f"{p:9.3f}"
+    print(f"    {N:5d} {H/N*1e3:10.4f} {errN:16.3e} {p_str:>9}")
+    prev_err = errN
+p_obs = orders[-1] if orders else float("nan")
+print(f"\n  observed order of accuracy on the finest pair: p = {p_obs:.3f} "
+      "(design order 2)")
+print(f"  agreement at N = {N_fine}: Linf = {Linf_fine:.2e} m/s "
+      f"({Linf_fine/scale_u:.1e} relative)")
+assert 1.7 < p_obs < 2.3, "FVM did not converge at the expected 2nd order"
+assert Linf_fine < 1e-3 * scale_u, "FVM does not match the analytical solution"
+print("  PASS: the finite-volume solution converges to the analytical profile "
+      "at 2nd order.")
+
+
+# ===========================================================================
 # Plots:  velocity profile (both layers, coloured) + shear-stress distribution
 # ===========================================================================
 yl = np.linspace(0.0, h1, 400)
@@ -376,6 +488,10 @@ fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.4, 5.2),
 # -- velocity profile --
 ax1.plot(ul * 1e3, yl * 1e3, color=LOW_C, lw=2.6, label="lower fluid  $u_1(y)$")
 ax1.plot(uu * 1e3, yu * 1e3, color=UP_C, lw=2.6, label="upper fluid  $u_2(y)$")
+# overlay the independent finite-volume solution (coarse grid, for markers)
+yc_p, u_p = solve_numeric(20)
+ax1.plot(u_p * 1e3, yc_p * 1e3, "ks", ms=4.5, mfc="white", mew=1.0,
+         label="FVM (numerical)")
 ax1.axhspan(0.0, h1 * 1e3, color=LOW_C, alpha=0.08)
 ax1.axhspan(h1 * 1e3, H * 1e3, color=UP_C, alpha=0.10)
 ax1.axhline(h1 * 1e3, color="0.35", lw=1.2, ls="--", label="interface")
