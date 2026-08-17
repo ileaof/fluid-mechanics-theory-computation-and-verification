@@ -505,10 +505,9 @@ ax1.axvline(0.0, color="0.7", lw=0.8)
 ax1.set_xlabel("velocity  u (mm/s)")
 ax1.set_ylabel("cross-gap coordinate  y (mm)")
 ax1.set_title("Velocity profile (two-phase Poiseuille)")
-# Anchor the legend a little below the top edge so the thick upper-plate line
-# (drawn at y = H) does not cross the legend text.
-ax1.legend(frameon=False, fontsize=9, loc="upper right",
-           bbox_to_anchor=(1.0, 0.90))
+# Place the legend at the middle-left, where both parabolas (which bulge to the
+# right toward u_max) leave empty space, so it never crosses the curves.
+ax1.legend(frameon=False, fontsize=9, loc="center left")
 ax1.grid(alpha=0.3)
 
 # -- shear-stress distribution --
@@ -521,8 +520,7 @@ ax2.axvline(0.0, color="0.7", lw=0.8)
 ax2.set_xlabel(r"shear stress  $\tau = \mu\,du/dy$  (Pa)")
 ax2.set_ylabel("cross-gap coordinate  y (mm)")
 ax2.set_title("Shear-stress distribution")
-ax2.legend(frameon=False, fontsize=9, loc="upper right",
-           bbox_to_anchor=(1.0, 0.90))
+ax2.legend(frameon=False, fontsize=9, loc="center left")
 ax2.grid(alpha=0.3)
 
 fig.suptitle("Stratified two-phase Poiseuille flow between stationary parallel "
