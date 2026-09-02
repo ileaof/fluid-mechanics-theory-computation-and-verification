@@ -20,8 +20,20 @@ The zone is a structured **ORDERED** zone with **POINT** data packing (one
 record per node, all variables on the same line).  This replaces the legacy
 ``F=POINT`` token -- a deprecated finite-element specifier that conflicts with
 ``DATAPACKING`` and is rejected by current Tecplot 360.  Node values are
-flattened in Fortran order so the I (x) index varies fastest, then J (y), then
-K (z), which is the ordering Tecplot expects for an ORDERED zone.
+flattened in Fortran order so the I index varies fastest, then J, then K,
+which is the ordering Tecplot expects for an ORDERED zone.
+
+**Axis convention (3-D).**  The framework's vertical axis is ``y`` (gravity is
+``[0, -g, 0]`` and every internal array is indexed ``(x, y, z)``).  Tecplot
+360's default 3-D axis assignment, however, is *Z-up*: variables X and Y span
+the horizontal plane and Z is drawn vertically, so an untransposed export
+shows the fluid level "lying on its side".  The 3-D zone therefore translates
+to the receiver's convention at the export boundary -- ``Y <- z``,
+``Z <- y`` (the vertical), with the velocity components swapped to match
+(``V <- w``, ``W <- v``) -- so Tecplot's default 3-D view shows the free
+surface in the X-Y plane with height along Z.  The 2-D export is unchanged
+(an IJ plot already draws Y vertically).  The HDF5/CSV exports keep the
+internal ``(x, y, z)`` convention with named columns/datasets.
 
 The exporter is intentionally ASCII-only (no binary Tecplot variant) to match
 the project specification and remain trivially diffable.  Files are written
@@ -79,21 +91,39 @@ class TecplotExporter:
         # Modern ORDERED zone header (py2tec dialect): ZONETYPE=ORDERED with
         # DATAPACKING=POINT -- no legacy F=POINT token.  STRANDID groups the
         # per-file time steps into one strand for Tecplot's time animation.
-        dims = f"I={Nx} J={Ny}" if mesh.is_2d else f"I={Nx} J={Ny} K={Nz}"
+        if mesh.is_2d:
+            # 2-D: an IJ plot draws Y vertically -- the internal (x, y) layout
+            # already matches Tecplot's convention.
+            X = mesh.Xc.ravel(order="F")
+            Y = mesh.Yc.ravel(order="F")
+            Z = mesh.Zc.ravel(order="F")
+            U = u.ravel(order="F")
+            V = v.ravel(order="F")
+            W = w.ravel(order="F")
+            P = p.ravel(order="F")
+            TT = T.ravel(order="F")
+            A = alpha.ravel(order="F")
+            I_, J_ = Nx, Ny
+        else:
+            # 3-D: translate to Tecplot's Z-up axis convention -- the zone is
+            # re-indexed (I, J, K) -> (x, z, y) with Y <- z and Z <- y (the
+            # vertical), and V/W swap so the components follow their axes.
+            def tz(a):
+                return np.ascontiguousarray(np.transpose(a, (0, 2, 1)))
+            X = tz(mesh.Xc).ravel(order="F")
+            Y = tz(mesh.Zc).ravel(order="F")
+            Z = tz(mesh.Yc).ravel(order="F")
+            U = tz(u).ravel(order="F")
+            V = tz(w).ravel(order="F")
+            W = tz(v).ravel(order="F")
+            P = tz(p).ravel(order="F")
+            TT = tz(T).ravel(order="F")
+            A = tz(alpha).ravel(order="F")
+            I_, J_ = Nx, Nz
+
+        dims = f"I={I_} J={J_}" if mesh.is_2d else f"I={I_} J={J_} K={Ny}"
         zone = (f'ZONE T="{zonename}" ZONETYPE=ORDERED {dims} '
                 f'DATAPACKING=POINT STRANDID=1 SOLUTIONTIME={time:.6f}')
-
-        # Flatten in Fortran order so I (x) varies fastest, then J (y), then
-        # K (z) -- the ordering an ORDERED POINT zone expects.
-        X = mesh.Xc.ravel(order="F")
-        Y = mesh.Yc.ravel(order="F")
-        Z = mesh.Zc.ravel(order="F")
-        U = u.ravel(order="F")
-        V = v.ravel(order="F")
-        W = w.ravel(order="F")
-        P = p.ravel(order="F")
-        TT = T.ravel(order="F")
-        A = alpha.ravel(order="F")
 
         rows = np.stack([X, Y, Z, U, V, W, P, TT, A], axis=1)
         with open(path, "w", encoding="utf-8") as fh:
@@ -102,6 +132,23 @@ class TecplotExporter:
             fh.write(zone + '\n')
             for r in rows:
                 fh.write(" ".join(f"{val:.6e}" for val in r) + "\n")
+            # Embedded style commands (executed by Tecplot right after the
+            # data is read): show the heavy phase (Alpha = 0.5) as an
+            # iso-surface.  Without it Tecplot draws only the shaded domain
+            # boundary -- the drop sits in the interior and stays invisible.
+            # Alpha is variable 9 in the VARIABLES list above.
+            if not mesh.is_2d and alpha.min() < 0.5 < alpha.max():
+                fh.write("$!GlobalContour 1\n  Var = 9\n")
+                fh.write("$!GlobalIsoSurface\n"
+                         "  Show = Yes\n"
+                         "  IsoSurfaceSelection = OneSpecificValue\n"
+                         "  DefinitionContourGroup = 1\n"
+                         "  IsoValue1 = 0.5\n"
+                         "  Contour\n    {\n    Show = Yes\n    }\n"
+                         "  Shade\n    {\n    Show = Yes\n    }\n")
+                fh.write("$!FieldLayers\n"
+                         "  ShowShade = No\n"
+                         "  ShowIsoSurfaces = Yes\n")
             fh.write("\n")
         return path
 

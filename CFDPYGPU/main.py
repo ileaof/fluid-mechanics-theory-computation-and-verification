@@ -216,8 +216,15 @@ class Simulation:
             cy = self.cfg.drop_y if self.cfg.drop_y > 0.0 else 0.8 * mesh.Ly
             r = self.cfg.drop_r if self.cfg.drop_r > 0.0 else \
                 0.06 * min(mesh.Lx, mesh.Ly)
-            Xc, Yc, _ = mesh.cell_grid()
-            inside = (Xc - cx) ** 2 + (Yc - cy) ** 2 <= r ** 2
+            Xc, Yc, Zc = mesh.cell_grid()
+            if mesh.is_2d:
+                inside = (Xc - cx) ** 2 + (Yc - cy) ** 2 <= r ** 2
+            else:
+                # 3-D: a spherical drop centred on the x/z mid-plane.  The
+                # ``drop_z`` config value overrides the default centre height.
+                cz = self.cfg.drop_z if self.cfg.drop_z > 0.0 else 0.5 * mesh.Lz
+                inside = ((Xc - cx) ** 2 + (Yc - cy) ** 2
+                          + (Zc - cz) ** 2) <= r ** 2
             alpha[inside] = 1.0
         # uniform -> already set to alpha_value
         np.clip(alpha, 0.0, 1.0, out=alpha)

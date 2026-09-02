@@ -1,0 +1,90 @@
+{
+    "name": "liquid_drop_splash_3D",
+
+    "Nx": 48,
+    "Ny": 72,
+    "Nz": 48,
+    "Lx": 1.0,
+    "Ly": 1.5,
+    "Lz": 1.0,
+
+    "dt": 0.002,
+    "tfinal": 1.0,
+    "time_scheme": "implicit",
+    "adaptive_dt": true,
+    "cfl_max": 0.3,
+    "dt_max": 0.005,
+    "dt_min": 1e-7,
+
+    "rho": 1000.0,
+    "mu": 1.0e-3,
+    "cp": 4180.0,
+    "k": 0.6,
+    "beta": 0.0,
+    "gravity": [0.0, -9.81, 0.0],
+
+    "use_vof": true,
+    "vof_reconstruct": "plic",
+    "rho_light": 1.2,
+    "mu_light": 1.8e-5,
+    "sigma": 0.0,
+    "boussinesq": false,
+    "solve_energy": false,
+
+    "convection": "upwind",
+    "limiter": "vanleer",
+    "linear_solver": "bicgstab",
+    "linear_tol": 1e-5,
+    "linear_maxiter": 1000,
+    "poisson_tol": 1e-6,
+    "poisson_maxiter": 3000,
+    "use_ilu": false,
+
+    "velocity_bc": {
+        "west":  "no-slip",
+        "east":  "no-slip",
+        "south": "no-slip",
+        "north": "no-slip",
+        "bottom": "no-slip",
+        "top": "no-slip"
+    },
+    "temperature_bc": {
+        "west": "adiabatic", "east": "adiabatic",
+        "south": "adiabatic", "north": "adiabatic",
+        "bottom": "adiabatic", "top": "adiabatic"
+    },
+    "pressure_bc": {
+        "west": "neumann", "east": "neumann",
+        "south": "neumann", "north": "neumann",
+        "bottom": "neumann", "top": "neumann"
+    },
+
+    "alpha_init": "splash_drop",
+    "alpha_value": 0.0,
+    "pool_height": 0.3,
+    "drop_x": 0.5,
+    "drop_y": 1.05,
+    "drop_z": 0.5,
+    "drop_r": 0.12,
+
+    "flow_streamlines": false,
+
+    "t0": 293.15,
+    "u0": 0.0,
+    "v0": 0.0,
+    "w0": 0.0,
+
+    "use_gpu": true,
+    "pressure_gpu_solver": "auto",
+    "use_gpu_krylov": false,
+
+    "output_dir": "outputs/liquid_drop_splash_3D",
+    "output_interval": 0.04,
+    "save_csv": false,
+    "save_hdf5": true,
+    "save_tecplot": true,
+    "save_png": false,
+    "save_mp4": false,
+    "verbose": true,
+    "plot_interval": 5
+}

@@ -181,6 +181,8 @@ python main.py examples/dam_break_2D/config.json
 python main.py examples/backward_facing_step/config.json
 python main.py examples/liquid_drop_splash_2D/config.json
 python main.py examples/cylinder_flow/config.json
+python main.py examples/liquid_drop_splash_3D/config.json   # 3-D splash (GPU)
+python -m visualization.render_vof_3d examples/liquid_drop_splash_3D/config.json
 ```
 
 Each run prints a *CFDPy Hardware Report* naming the execution device, then a
@@ -291,7 +293,51 @@ Outputs: free-surface evolution (α contour on the temperature PNG), pressure
 PNGs, Tecplot `.dat` frames, HDF5 snapshots, and `*_alpha.mp4` / `*_p.mp4` /
 `*_T.mp4` / `*_velocity.mp4` animations (each ~10 s, 20 fps, spanning 0 → 4 s).
 
-#### Restart / checkpoint resume
+#### The 3-D splash — `liquid_drop_splash_3D` (0 → 2.0 s)
+
+The same benchmark in a **3-D closed tank** (1.0 × 1.5 × 1.0 m, 48×72×48
+cells ≈ 166 k): the `"splash_drop"` initial condition becomes a true
+**spherical** drop (`drop_r = 0.12 m` at `(0.5, 1.05, 0.5)`, set by the new
+`drop_z` key) above the 0.3 m pool.  The run is built up in restart legs
+(0 → 1.0 s, then 1.0 → 2.0 s from the `frame_000606.h5` checkpoint, see
+[Restart / checkpoint resume](#restart--checkpoint-resume)) and takes
+**~48 min + ~55 min on an RTX 4050 laptop GPU**; mass is conserved to 1.3 %
+over the 2 s.  The movie below spans the whole sequence: free fall, impact
+(t ≈ 0.33 s), crater, annular splash crown, the central Worthington jet
+(t ≈ 0.9 s) and the crown jets breaking into fingers.
+
+```bash
+python main.py examples/liquid_drop_splash_3D/config.json
+python -m visualization.render_vof_3d examples/liquid_drop_splash_3D/config.json
+```
+
+The 3-D free surface is rendered by `visualization/render_vof_3d.py` (the 2-D
+matplotlib viewer does not extend to volumes): a shaded **free-surface height
+map** for the pool-connected water, an interface point cloud coloured by flow
+speed for the airborne drop and ejecta, and frames stitched to H.264 with
+ffmpeg.  Frames are exported in Tecplot's **Z-up** axis convention
+(`Y ← z`, `Z ← y`, `V ↔ W` swapped — see `visualization/tecplot_writer.py`)
+and each 3-D `.dat` embeds an `Alpha = 0.5` iso-surface style block, so
+Tecplot 360 shows the water (pool + drop + crown) on load.  A GPU-Krylov
+option (`"use_gpu_krylov"`) exists for this strong-contrast regime but keeps
+the CPU BiCGSTAB default — measured on the interface right-hand side it
+stagnates where the CPU path still converges (§4 of
+[GPU_PERFORMANCE_REPORT.md](GPU_PERFORMANCE_REPORT.md)).
+
+The movie is rendered **directly from the Tecplot `.dat` frames** (which also
+validates the export round-trip):
+
+```bash
+python -m visualization.render_vof_3d examples/liquid_drop_splash_3D/config.json \
+    --source dat --fps 5 --name Splash_Drop_3D_2s.mp4
+```
+
+<video src="outputs/liquid_drop_splash_3D/Splash_Drop_3D_2s.mp4"
+       controls muted playsinline width="720"></video>
+
+*(Movie: `outputs/liquid_drop_splash_3D/Splash_Drop_3D_2s.mp4` — 51 Tecplot
+frames at 5 fps, 0 → 2.0 s: free fall, impact, crater, splash crown,
+Worthington jet, finger instability.)*
 
 Every HDF5 frame written during a run (`frame_XXXXXX.h5`) is a valid restart
 snapshot: it stores `u, v, w, p, T, alpha` plus the simulation time.  Point the
@@ -524,6 +570,7 @@ device-agnostic.  Each layer depends only on the one below it.
 | `gpu/backend.py` | An array/device backend with two implementations of one interface: `NumPyBackend` (the CPU path and the fallback) and `CUDABackend` (Numba-CUDA device arrays in Numba's per-context memory pool, so repeated `zeros`/`empty` of the same shape reuse cached allocations instead of round-tripping through `cudaMalloc`/`cudaFree`).  `get_backend()` returns the CUDA backend when `use_gpu` is true *and* a GPU was detected; the result is cached process-wide. |
 | `gpu/kernels.py` | Low-level `@cuda.jit` kernels: a sparse CSR matvec (`matvec_csr`, one thread per row, grid-stride, race-free without atomics) and the BLAS-1 primitives a Krylov driver needs (`dot`, `dot2`, `max_abs`, `norm2`, and the in-place `copy` / `axpy` / `scale_add` / `fill` / `div_pointwise`).  The two-level shared-memory tree reduction (`BLOCK = 256`) writes one partial per block — no float atomics, so results are deterministic — and reduces the partials on the device, so only **one float crosses device→host per reduction**.  `dot2` fuses two dot products into a single host sync, which is exactly what the BiCGSTAB *ω*-step needs. |
 | `gpu/linear.py` | `GPUBiCGSTAB` — a GPU-resident preconditioned BiCGSTAB (van der Vorst) with an optional **Jacobi (diagonal) preconditioner**, the only preconditioner that is cheap on a GPU (a pointwise divide) and free of the sequential triangular solves that make ILU awkward on a device.  Workspace is allocated once per solver instance and reused; the inverse diagonal is cached per matrix identity.  Convergence is tested on the cheap recurrence residual but **verified with the true residual** `b − A x` on exit, to catch the BiCGSTAB phantom-convergence stop, and the residual norm is only evaluated every 4 iterations (`check_every = 4`) to cut sync overhead. |
+| `gpu/multigrid.py` | `GPUGeometricMultigrid` — a cell-centred **geometric multigrid V-cycle** for the pressure-Poisson solve: red-black Gauss-Seidel smoothing (one 3-D kernel launch per colour per sweep), full-weighting restriction, trilinear prolongation, harmonic-rediscretised coarse operators and a cached direct LU on the coarsest level.  The production `PressureSolver` uses it for the pure-Neumann steps inside its convergence envelope (mild density contrast; `pressure_gpu_solver` / `mg_max_density_ratio` config) and falls back to `GPUBiCGSTAB` / SciPy otherwise — strong-contrast VOF (air/water, ratio 833) needs the Krylov path, where rediscretised coarse operators diverge. |
 
 ### Validation
 
@@ -532,6 +579,7 @@ Two standalone harnesses check the GPU work against the CPU reference:
 ```bash
 python -m gpu.validate_kernels     # every kernel vs its NumPy reference
 python -m gpu.validate_linear      # GPU BiCGSTAB vs CPU on the real operator
+python -m gpu.validate_multigrid   # geometric multigrid vs direct + Krylov
 ```
 
 `validate_kernels` confirms the matvec is **exact** and the reductions agree to
@@ -706,7 +754,20 @@ The most useful knobs:
   [staircase caveat](#example-5--flow-past-a-circular-cylinder)).
 - **GPU**: `"use_gpu"` (default `true`) enables the CUDA path when a
   CUDA-capable NVIDIA GPU is detected; set it to `false` to force the CPU path
-  with identical numerics.  See [GPU acceleration](#gpu-acceleration).
+  with identical numerics.  On a GPU machine the pressure-Poisson solve is
+  computed by the geometric multigrid (`"pressure_gpu_solver": "auto"`, the
+  default) whenever the problem is inside its convergence envelope —
+  pure-Neumann boundaries, no cut cells, density ratio ≤ `"mg_max_density_ratio"`
+  (default 5), and a grid large enough to coarsen (N > `mg_coarse_max_cells`,
+  default 4096) — and by the Krylov solver otherwise; `"pressure_gpu_solver":
+  "krylov"` forces the pre-multigrid behaviour everywhere.  When the multigrid
+  guard declines (strong density contrast, e.g. air/water VOF) the
+  `"use_gpu_krylov"` option (default `false`) moves that Krylov solve itself
+  onto the GPU (`"gpu_krylov_min_cells"`, default 16384, keeps small systems
+  on the CPU) — about 2x the CPU rate on benchmark systems, but note it can
+  stagnate on hard two-phase right-hand sides, in which case the run
+  automatically falls back to the CPU solver.  See
+  [GPU acceleration](#gpu-acceleration).
 - **Output**: `output_interval` (in simulation time), and the `save_*`
   booleans.  `output_dir` controls where everything lands.
 
@@ -950,6 +1011,7 @@ CFDPYGPU/
 │   └── cut_cell.py          #   cut-cell volume/aperture geometry (dormant, flag OFF)
 ├── visualization/
 │   ├── matplotlib_view.py   #   MatplotlibViewer: PNG + MP4/GIF
+│   ├── render_vof_3d.py     #   3-D VOF frames (HDF5) -> PNG stills + MP4
 │   ├── tecplot_writer.py    #   TecplotExporter: .dat (py2tec dialect) / .csv / .h5
 │   └── postprocessor.py     #   vorticity, streamfunction, Nusselt
 ├── examples/
@@ -957,6 +1019,8 @@ CFDPYGPU/
 │   ├── dam_break_2D/config.json
 │   ├── backward_facing_step/config.json
 │   ├── liquid_drop_splash_2D/config.json
+│   ├── liquid_drop_splash_3D/config.json   # 3-D splash: spherical drop,
+│   │                       #   48x72x48, Tecplot+HDF5 frames, render_vof_3d
 │   └── cylinder_flow/       #   Re sweep + mesh study + report
 │       ├── config.json
 │       ├── run_reynolds.py  #     sweep driver; writes cylinder_report.md
