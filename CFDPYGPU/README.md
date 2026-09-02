@@ -324,20 +324,17 @@ the CPU BiCGSTAB default — measured on the interface right-hand side it
 stagnates where the CPU path still converges (§4 of
 [GPU_PERFORMANCE_REPORT.md](GPU_PERFORMANCE_REPORT.md)).
 
-The movie is rendered **directly from the Tecplot `.dat` frames** (which also
-validates the export round-trip):
+The published movie is the **Tecplot 360 export** of the `.dat` frame
+sequence — 0 → 2.0 s: free fall, impact, crater, splash crown, Worthington
+jet, finger instability:
 
-```bash
-python -m visualization.render_vof_3d examples/liquid_drop_splash_3D/config.json \
-    --source dat --fps 5 --name Splash_Drop_3D_2s.mp4
-```
+**▶ Movie: [`Splash_Drop_3D_2s.wmv`](outputs/liquid_drop_splash_3D/Splash_Drop_3D_2s.wmv)**
 
-<video src="outputs/liquid_drop_splash_3D/Splash_Drop_3D_2s.mp4"
-       controls muted playsinline width="720"></video>
-
-*(Movie: `outputs/liquid_drop_splash_3D/Splash_Drop_3D_2s.mp4` — 51 Tecplot
-frames at 5 fps, 0 → 2.0 s: free fall, impact, crater, splash crown,
-Worthington jet, finger instability.)*
+(A reproducible H.264 fallback can be rendered straight from the `.dat`
+frames — which also validates the export round-trip — with the bundled
+renderer: `python -m visualization.render_vof_3d
+examples/liquid_drop_splash_3D/config.json --source dat --fps 5
+--name Splash_Drop_3D_2s.mp4`.)
 
 Every HDF5 frame written during a run (`frame_XXXXXX.h5`) is a valid restart
 snapshot: it stores `u, v, w, p, T, alpha` plus the simulation time.  Point the
