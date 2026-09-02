@@ -166,10 +166,12 @@ CONFIG_UNITS: dict[str, str] = {
     # initial conditions
     "u0": "m/s", "v0": "m/s", "w0": "m/s",
     # obstacle / drop geometry
-    "drop_x": "m", "drop_y": "m", "drop_r": "m", "pool_height": "m",
+    "drop_x": "m", "drop_y": "m", "drop_z": "m", "drop_r": "m", "pool_height": "m",
     # dimensionless / tolerances
     "alpha_value": "-",
     "linear_tol": "-", "poisson_tol": "-",
+    # GPU pressure-solver knobs (dimensionless by nature)
+    "mg_max_density_ratio": "-",
 }
 
 
@@ -300,7 +302,8 @@ def validate_config(cfg, *, strict: bool = False) -> list[Issue]:
     # (c) undocumented dimensional parameters (numeric, non-flag fields with no
     #     registered unit and not a known dimensionless/tolerance/count knob).
     _ignore = {"Nx", "Ny", "Nz", "plot_interval", "linear_maxiter",
-               "poisson_maxiter", "alpha_value"}
+               "poisson_maxiter", "alpha_value", "mg_coarse_max_cells",
+               "gpu_krylov_min_cells"}
     for key, val in vars(cfg).items():
         if key in _ignore or key in CONFIG_UNITS or key in DIMENSIONLESS:
             continue

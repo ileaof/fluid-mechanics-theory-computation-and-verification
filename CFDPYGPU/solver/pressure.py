@@ -37,6 +37,16 @@ a VOF simulation):
 For a single-phase (constant ``rho``) run the same path is used with a uniform
 density; it reduces to the standard kinematic-pressure projection.
 
+**Solvers.**  The default linear solver is the SciPy Krylov path
+(:class:`~solver.linear_solver.LinearSolver`).  On a CUDA machine the
+pure-Neumann, cut-cell-free steps inside the multigrid convergence envelope
+(mild density contrast; see ``pressure_gpu_solver`` /
+``mg_max_density_ratio`` in the config) are computed with the GPU geometric
+multigrid of :mod:`gpu.multigrid` instead -- it builds its own operator from
+the same face ``1/rho`` values and skips the CSR assembly entirely.  Anything
+outside that envelope (outlets, cut cells, air/water VOF) silently uses the
+Krylov path.
+
 **Null-space handling.**  The Poisson operator has a one-dimensional null
 space (the constant pressure field) because only Neumann (zero-gradient)
 boundary conditions appear.  Rather than pinning a single matrix row -- which
@@ -99,6 +109,20 @@ class PressureSolver:
         self._cc_vf: np.ndarray | None = None
         self._cc_is_solid: np.ndarray | None = None
         self._cc_ap_eff: dict[int, np.ndarray] = {}
+        # GPU geometric-multigrid solver (lazy: the CUDA backend is only
+        # touched when a GPU is active and ``pressure_gpu_solver`` selects
+        # it).  ``None`` until the first pure-Neumann solve; ``False`` once a
+        # non-converged V-cycle has disabled it for the rest of the run.
+        self._mg = None
+        self._mg_rho_id: int | None = None   # rho array the MG coeffs encode
+        # GPU Krylov (BiCGSTAB + Jacobi) path (:mod:`gpu.linear`), enabled with
+        # ``use_gpu_krylov``.  Used when the multigrid guard declines (e.g. the
+        # air/water VOF density contrast): the CSR matrix built for the CPU
+        # solver is uploaded to the device each step (~nnz transfers, a few ms)
+        # and the whole Krylov loop runs on the GPU.  ``False`` disables it for
+        # the rest of the run after a non-convergence, as for the multigrid.
+        self._gk = None
+        self._gk_fail: bool = False
 
     # ------------------------------------------------------------------ #
     def set_cut_cell(self, cc) -> None:
@@ -509,7 +533,6 @@ class PressureSolver:
         """
 
         mesh = self.mesh
-        A = self._matrix(rho)
         Fx, Fy, Fz = self._face_fluxes(us, vs, ws)
         # Rhie-Chow: replace the averaged cell-centre pressure gradient in the
         # face flux with the *direct* face pressure difference.  For a smooth
@@ -527,17 +550,146 @@ class PressureSolver:
         rhs = div_us.ravel() / dt
         if self.has_outlet and p_old is not None:
             # Dirichlet: dp = p_out - p_old  ->  p^{n+1} = p_old + dp = p_out.
+            A = self._matrix(rho)
             rhs = rhs.copy()
             rhs[self._outlet_idx] = (self._outlet_val
                                      - p_old.ravel()[self._outlet_idx])
-            dp_vec = self.ls.solve(A, rhs, x0=np.zeros_like(rhs))
+            dp_vec = self._gpu_krylov_solve(A, rhs)
+            if dp_vec is None:
+                dp_vec = self.ls.solve(A, rhs, x0=np.zeros_like(rhs))
             dp = dp_vec.reshape(mesh.cell_shape)
         else:
             # Project the RHS onto the zero-mean subspace (remove the constant
             # null space) so the singular symmetric system is consistent.
             rhs = rhs - rhs.mean()
-            dp_vec = self.ls.solve(A, rhs, x0=np.zeros_like(rhs))
-            dp = dp_vec.reshape(mesh.cell_shape)
+            mg = self._multigrid(rho)
+            if mg is not None:
+                dp = mg.solve(rhs).reshape(mesh.cell_shape)
+                if not mg.last_converged:
+                    # Outside the envelope after all (e.g. a density field the
+                    # static ratio guard let through): disable the multigrid
+                    # path for the rest of the run and redo this step with the
+                    # Krylov solver (the failed V-cycles are discarded).
+                    self._mg = False
+                    mg = None
+            if mg is None:
+                A = self._matrix(rho)
+                dp_vec = self._gpu_krylov_solve(A, rhs)
+                if dp_vec is None:
+                    dp_vec = self.ls.solve(A, rhs, x0=np.zeros_like(rhs))
+                dp = dp_vec.reshape(mesh.cell_shape)
             # The solution is determined up to a constant; fix the mean to zero.
             dp = dp - dp.mean()
         return dp, (Fx, Fy, Fz)
+
+    # ------------------------------------------------------------------ #
+    def _gpu_krylov_solve(self, A: sp.csr_matrix, rhs: np.ndarray):
+        """Solve ``A x = rhs`` with the GPU BiCGSTAB (Jacobi), or ``None``.
+
+        Enabled with ``use_gpu_krylov`` in the config.  This is the strong-
+        contrast path the geometric multigrid cannot serve (air/water VOF,
+        density ratio 833): measured on the RTX 4050 at 64^3, the on-device
+        Krylov loop runs the same two-phase Poisson system in ~2.0 s against
+        ~4.1 s for the CPU no-ILU BiCGSTAB (see GPU_PERFORMANCE_REPORT 4.2).
+        The CSR matrix is rebuilt every step (the VOF coefficients change), so
+        the data/indices/indptr arrays are re-uploaded each call -- a few ms
+        against a multi-second solve.  Below ``gpu_krylov_min_cells`` the
+        host-device round trips and per-iteration syncs dominate and the CPU
+        Krylov path is kept.  A non-convergence disables the path for the rest
+        of the run (the caller silently redoes the solve on the CPU).  Note:
+        on a hard strong-contrast system the Jacobi-preconditioned Krylov can
+        stagnate above the tolerance (measured on the 3-D splash RHS: 1e-2
+        after 3000 iterations, where the CPU path stalls at ~3e-4) -- the
+        fallback then engages automatically and the CPU path is kept, which is
+        why the production default for ``use_gpu_krylov`` is ``False``.
+        """
+        if self._gk_fail or not bool(getattr(self.cfg, "use_gpu_krylov", False)):
+            return None
+        n = A.shape[0]
+        if n < int(getattr(self.cfg, "gpu_krylov_min_cells", 16384)):
+            return None
+        from gpu.backend import is_gpu_active
+        if not is_gpu_active():
+            return None
+        if self._gk is None or self._gk.n != n:
+            from gpu.linear import GPUBiCGSTAB
+            self._gk = GPUBiCGSTAB(
+                n, tol=self.cfg.poisson_tol,
+                maxiter=int(getattr(self.cfg, "poisson_maxiter", 3000)),
+                use_jacobi=True)
+        bck = self._gk.backend
+        xd = self._gk.solve(bck.asarray(A.data), bck.asarray(A.indices),
+                            bck.asarray(A.indptr), bck.asarray(rhs))
+        x = bck.to_host(xd)
+        if not self._gk.last_converged:
+            # Outside the GPU Krylov envelope (Jacobi-preconditioned BiCGSTAB
+            # stalled): fall back to the CPU solver for the rest of the run.
+            self._gk_fail = True
+            return None
+        return x
+
+    # ------------------------------------------------------------------ #
+    def _multigrid(self, rho):
+        """Return the GPU geometric-multigrid solver for this step, or ``None``.
+
+        The multigrid path (:mod:`gpu.multigrid`) is selected only inside its
+        measured convergence envelope:
+
+        * the CUDA backend is active and ``pressure_gpu_solver`` is not
+          ``"krylov"``;
+        * the operator is pure Neumann with no cut cells and no pressure
+          outlet (the Dirichlet-pinned and aperture-weighted operators need
+          the Krylov matrix, which the multigrid does not build);
+        * the density contrast ``max(rho)/min(rho)`` is at most
+          ``mg_max_density_ratio`` -- rediscretised coarse operators converge
+          for mild contrasts (ratio 5 needs ~60 V-cycles on a 200x160 grid)
+          and diverge beyond ~6, so strong-contrast problems (air/water VOF,
+          ratio 833) keep the Krylov solver.
+
+        On first use the solver object is created; every call refreshes the
+        face coefficients (which also rebuilds the coarse hierarchy and the
+        cached coarsest LU -- cheap O(N) host passes).  The Poisson matrix
+        :meth:`_matrix` is *not* built on this path, so the Krylov assembly
+        cost is skipped entirely.
+        """
+        if self._mg is False or self.ls is None:
+            return None
+        mode = getattr(self.cfg, "pressure_gpu_solver", "auto")
+        if mode == "krylov":
+            return None
+        if self.cut_cell_active or self.has_outlet:
+            return None
+        from gpu.backend import is_gpu_active
+        if not is_gpu_active():
+            return None
+        if float(rho.max() / rho.min()) > float(
+                getattr(self.cfg, "mg_max_density_ratio", 5.0)):
+            return None
+        if (self.mesh.Nx * self.mesh.Ny * self.mesh.Nz <= int(
+                getattr(self.cfg, "mg_coarse_max_cells", 4096))):
+            # Small problem: the "hierarchy" would be a single level (direct
+            # LU), and rebuilding it plus the host<->device transfers costs
+            # more than the Krylov solve at this size (measured: 800-step
+            # 60x60 natural-convection run, 58 s MG vs 53 s Krylov, because
+            # the Boussinesq density changes every step).  Keep Krylov.
+            return None
+        if self._mg is None:
+            from gpu.multigrid import GPUGeometricMultigrid
+            self._mg = GPUGeometricMultigrid(
+                self.mesh.cell_shape, tol=self.cfg.poisson_tol,
+                max_cycles=100,
+                coarse_max_cells=int(
+                    getattr(self.cfg, "mg_coarse_max_cells", 4096)))
+        elif id(rho) == self._mg_rho_id:
+            # Same rho array (single-phase: cached upstream) -- the operator,
+            # coarse hierarchy and coarsest LU are already current.
+            return self._mg
+        mesh = self.mesh
+        hx2, hy2, hz2 = mesh.dx ** 2, mesh.dy ** 2, mesh.dz ** 2
+        irx, iry, irz = self._inv_rho_faces(rho)
+        self._mg.set_face_coefficients(
+            irx[1:mesh.Nx, :, :] / hx2,
+            iry[:, 1:mesh.Ny, :] / hy2,
+            None if mesh.is_2d else irz[:, :, 1:mesh.Nz] / hz2)
+        self._mg_rho_id = id(rho)
+        return self._mg

@@ -207,6 +207,91 @@ single-phase. It is deliberately **not wired into the production
 regimes — per the incremental methodology, an increment that regresses the
 production solver is not promoted.
 
+### 4.4 Increment C — GPU geometric multigrid pressure solver (`gpu/multigrid.py`) — delivered & wired
+
+* **Why selected:** §4.3 identified the *iteration count* (not the per-iteration
+  cost) as the Krylov bottleneck: 168–676 iterations at production sizes, each
+  dominated by device-side dot products and host syncs.  A geometric multigrid
+  removes the iteration count at its root — the long-wavelength error a Krylov
+  method crawls through is exactly what a coarse-grid correction annihilates —
+  and the smoother is local stencil work that runs without a single host sync
+  inside the cycle (~10 syncs per solve instead of ~500).
+* **CUDA design (`GPUGeometricMultigrid`):** cell-centred V-cycle on the *same*
+  operator as `PressureSolver._matrix` (7-point variable-coefficient Laplacian,
+  pure Neumann, mean-projected RHS / mean-subtracted solution).  Red-black
+  Gauss-Seidel smoothing (one 3-D launch per colour per sweep, race-free), full-
+  weighting restriction (row-normalised adjoint of prolongation), trilinear
+  prolongation with boundary renormalisation, harmonic rediscretisation of the
+  coarse face coefficients, ceil-half coarsening (an odd fine axis coarsened
+  with a floor leaves its last cell parentless and the cycle stagnates), cached
+  direct LU on the coarsest level (rebuilt only when the operator refreshes,
+  never per cycle), and one device residual reduction per cycle.
+* **What was tried and rejected** (measured, on the ρ-ratio-833 water/air VOF
+  operator): arithmetic coarse coefficients — diverges; Galerkin-fitted 7-point
+  — diverges (the Galerkin coarse matrix has ~63 nnz/row: the sharp interface
+  couples long-range, which no rediscretised stencil can express); aggregation
+  Galerkin — diverges; full-Galerkin PᵀAP per timestep — the only convergent
+  variant (0.77/cycle) but smoother-limited and too costly to assemble per step
+  on the host.  MG-preconditioned BiCGSTAB with a diverging V-cycle — dead end
+  (a preconditioner must be linear and fixed; rel-residual stalls at ≈1).
+  **Verdict:** strong-contrast problems keep the Krylov path; the multigrid
+  serves single-phase and mild-contrast runs.
+* **Hierarchy depth (measured):** the default `coarse_max_cells=4096` caps the
+  hierarchy at two coarsenings.  Three or more levels *stagnate* on every
+  production ladder — even single-phase (a NumPy replica of the 64³ 4-level
+  ladder decays from 0.45 to >1 per cycle, bit-identical to the device, which
+  reproduces one NumPy V-cycle to 3e-16).  This is an algorithmic property of
+  deep rediscretised hierarchies with this smoother/transfer pair, not a device
+  bug; do not raise `mg_coarse_max_cells` hoping for a faster deep hierarchy.
+* **Density-contrast envelope (measured on a 200×160 drop, ratio sweep):**
+  ratio 1.2 → 31 cycles; 3 → 32; 5 → 59; 6 → 148; **7 → diverges**.  The
+  production guard `mg_max_density_ratio` defaults to 5 — beyond ~6 the Krylov
+  path is also the faster choice, so nothing is lost.
+* **Production wiring (`PressureSolver._multigrid`, `pressure_gpu_solver`
+  config):** `"auto"` (default) selects the V-cycle per step when the CUDA
+  backend is active, the operator is pure Neumann, no cut cells,
+  `max(ρ)/min(ρ) ≤ mg_max_density_ratio`, **and the grid is large enough to
+  coarsen at all** (N > `mg_coarse_max_cells`; below that the "hierarchy" is
+  one direct LU whose per-step rebuild plus transfers loses to the CPU Krylov
+  solve — measured on the 60×60 natural-convection case: 800 steps, 58 s MG
+  vs 53 s Krylov).  Anything else (outlets, cut cells, small or
+  strong-contrast problems) uses the Krylov path unchanged.  The MG path
+  builds its operator from the same face `1/rho` values and **never assembles
+  the CSR matrix**; coefficients (and the coarse hierarchy + coarsest LU) are
+  refreshed only when the density array changes — a single-phase run reuses
+  them across steps.  A V-cycle that fails to converge at runtime disables the
+  MG path for the rest of the run and redoes that step with Krylov.
+* **End-to-end production check (`PressureSolver.solve`, `"auto"` vs
+  `"krylov"`):** on (200,160) single-phase the two solvers agree to rel 1.6e-07;
+  on a ratio-5 two-phase field to 7.9e-09; on the ratio-833 VOF field the guard
+  routes to Krylov and the results are bit-identical.  A full 800-step
+  natural-convection run (60×60, guard → Krylov because N ≤ 4096) matches the
+  pre-change code to machine precision (max|Δp| = 7e-15, max|Δu| = 2e-15).  ✅
+
+**Benchmark (RTX 4050 Laptop, warm, `nu1=nu2=4`; `python -m gpu.validate_multigrid`):**
+
+| Grid | N | case | GPU MG | GPU BiCGSTAB | CPU no-ILU | MG vs GPU BiCGSTAB |
+|------|---|------|--------|--------------|------------|--------------------|
+| 60×60 | 3 600 | single | **1.3 ms** (1 "cycle" = direct LU, N ≤ 4096) | 110 ms | 4.4 ms | **85×** |
+| 200×160 | 32 000 | single | **48 ms** (18 cycles) | 287 ms | 255 ms | **6.0×** |
+| 200×160 | 32 000 | two-phase ρ 833 | guard → Krylov (MG diverges) | 1 931 ms | 2 531 ms | — |
+| 64³ | 131 072 | single | **68 ms** (27 cycles) | 123 ms | 490 ms | **1.8×** |
+| 64³ | 131 072 | two-phase ρ 833 | guard → Krylov (MG diverges) | 2 015 ms | 4 076 ms | — |
+
+Accuracy vs the direct reference solve: rel L∞ ≤ 1.9e-07 on every converged
+case (within the 1e-7 tolerance amplified by the condition number, as with the
+Krylov solvers).
+
+**Honest reading:** the multigrid is a **6× net win for 2-D single-phase**
+(the cylinder/step regime at production size) and **1.8× on 3-D at 64³**; the
+85× on the 60×60 row is against the *GPU Krylov* path (which never made sense
+at that size) — the production policy routes small grids (N ≤ 4096) to the CPU
+Krylov solver, which is already fastest there.  In the VOF regime the *guard*
+is the feature: the ratio-833 cases would diverge, and routing them to Krylov
+costs one `max/min` per step.  The remaining per-step costs on the MG path are
+the host→device coefficient upload (O(N) PCIe) and the host solution download
+— Step 3 (GPU-resident fields) removes both.
+
 ---
 
 ## 5. Incremental GPU roadmap
@@ -214,32 +299,44 @@ production solver is not promoted.
 Ordered by expected impact, each step is Profile → Implement → Validate →
 Benchmark → promote-only-on-success, as the spec requires.
 
-### Step 1 (NEXT) — GPU geometric multigrid preconditioner
-The single change that turns both regimes into net wins. For the structured
-5-point Poisson on the collocated mesh, geometric multigrid (V-cycle with
-red-black Gauss-Seidel smoothing, full-weighting restriction, bilinear
-prolongation, coarsest-level direct solve) converges in **O(1) iterations**
-independent of N — eliminating both the 91.5 % ILU factorization (single-phase)
-and the ~2000-iteration Jacobi loop (VOF). All operators are structured-stencil
-(not CSR), so they map to 2-D CUDA grids with shared-memory halos and need **no
-host↔device transfer** during the cycle. Expected: GPU Poisson solve net-faster
-than CPU+ILU at all N, and ≫100× fewer iterations than the current GPU Jacobi
-path. This is the preconditioner `GPUBiCGSTAB` will call instead of
-`div_pointwise`.
+### Step 1 — GPU geometric multigrid pressure solver ✅ **delivered** (§4.4)
+Delivered as a **standalone solver** (`gpu/multigrid.py`), not as a Krylov
+preconditioner: an MG-preconditioned BiCGSTAB was tried and is a dead end (the
+V-cycle must be *linear and fixed* to precondition BiCGSTAB, and the
+rediscretised V-cycle diverges on strong density contrasts — a diverging
+preconditioner stalls BiCGSTAB at rel-residual ≈ 1 with info = -11
+breakdowns). The standalone V-cycle instead **replaces** Krylov entirely
+inside its convergence envelope, and the production `PressureSolver` selects
+between them per step (Step 2, also delivered).
 
-### Step 2 — Wire the GPU Poisson solve into the production `PressureSolver`
-Only after Step 1 makes the GPU solve a net win in both regimes. Keep the CPU
-path as the automatic fallback (`use_gpu` config flag, already added in
-`config_loader.py`). Validate a full `Simulation.step()` CPU-vs-GPU on the
-cylinder and dam-break cases: L2/relL∞ of pressure, velocity, and the per-step
-max divergence / max CFL, plus residual-history agreement.
+### Step 2 — Wire the GPU Poisson solve into the production `PressureSolver` ✅ **delivered** (§4.4)
+`pressure_gpu_solver` config option (`"auto"` / `"mg"` / `"krylov"`):
+`PressureSolver._multigrid` selects the V-cycle only inside its measured
+convergence envelope — pure Neumann, no cut cells, density ratio ≤
+`mg_max_density_ratio` (default 5) — and falls back to the Krylov path
+otherwise; a V-cycle that fails to converge at runtime disables the MG path
+for the rest of the run and redoes the step with Krylov. Coefficients are
+refreshed from the same face `1/rho` arrays; the CSR matrix is never built on
+the MG path.
 
-### Step 3 — Keep the fields GPU-resident across the whole step
+### Step 3 (NEXT) — Keep the fields GPU-resident across the whole step
+**Interim (2026-09-01):** the GPU Krylov solver itself is now reachable from
+production — `PressureSolver._gpu_krylov_solve` (`use_gpu_krylov: true`,
+`gpu_krylov_min_cells`, default 16384) uploads the per-step CSR matrix and
+runs `GPUBiCGSTAB` (Jacobi) when the multigrid guard declines (air/water VOF).
+Measured on the *real* 3-D splash system (48×72×48, ratio 833, interface RHS):
+the Jacobi-preconditioned Krylov **stagnates** (rel-residual 1e-2 after 3000
+iterations, where the CPU path stalls at ~3e-4), so the automatic fallback
+keeps the CPU solver and the option stays off by default — the benchmark-row
+wins (2.0 s vs 4.1 s at 64³) do not transfer to interface-driven RHS without
+a stronger preconditioner.  This is precisely Step 3's motivation: the
+transfer-free device-resident path is where the remaining win is.
+
 Move the velocity/pressure/temperature/density/phase-fraction fields and mesh
 coords to the device once at `Simulation.initialize()` and keep them there for
-the run. This is what makes the VOF 1.30× (measured at N=64000) become the
-*whole-step* speedup rather than just the Poisson-isolated number, by removing
-the per-solve host↔device copies that today bracket each linear solve.
+the run. For the multigrid this removes the last per-step H2D upload (the face
+coefficients, today O(N) PCIe per VOF step) and the D2H of the solution, and
+it is what makes the VOF Poisson win (§4.4) become a *whole-step* speedup.
 
 ### Step 4 — GPU stencil operators (gradient / divergence / face-interpolate)
 Once the fields are resident (Step 3), port the `numerics/` stencil kernels that
@@ -251,8 +348,9 @@ host transfer.
 ### Step 5 — GPU momentum / energy diffusion solves
 The momentum and energy diffusion terms (the other three of the four linear
 systems per step flagged in §2.1) are the same class of structured symmetric
-operator as the Poisson solve, so they reuse the Step-1 multigrid preconditioner
-and the Step-3 resident fields.
+operator as the Poisson solve, so they reuse the multigrid V-cycle
+(`GPUGeometricMultigrid` takes arbitrary face coefficients) and the Step-3
+resident fields.
 
 ### Future — multi-GPU / domain decomposition
 The backend was designed for this: `init_backend(device_index=local_rank)` (see
@@ -299,6 +397,9 @@ python -m gpu.validate_kernels
 
 # Validate + benchmark the GPU BiCGSTAB on the real Poisson operator (§4.2-4.3)
 python -m gpu.validate_linear
+
+# Validate + benchmark the GPU geometric multigrid (§4.4)
+python -m gpu.validate_multigrid
 
 # Print the hardware report (§1)
 python -c "from gpu import print_hardware_report; print_hardware_report()"

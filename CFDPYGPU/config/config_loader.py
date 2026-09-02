@@ -179,6 +179,7 @@ class Config:
     # resolved from the domain size in Simulation._init_alpha.
     drop_x: float = 0.0           # x-centre of the drop            [m]
     drop_y: float = 0.0           # y-centre of the drop            [m]
+    drop_z: float = 0.0           # z-centre of the drop (3-D only) [m]
     drop_r: float = 0.0           # radius of the drop              [m]
     pool_height: float = 0.0      # height of the bottom liquid pool [m]
 
@@ -281,6 +282,44 @@ class Config:
     # GPU-equipped machine (useful for validation / debugging).  The framework
     # still prints the hardware report at startup either way.
     use_gpu: bool = True
+
+    # -- GPU pressure-Poisson solver ----------------------------------------
+    # Which solver computes the pressure increment when the CUDA backend is
+    # active (see :mod:`gpu.multigrid`):
+    #
+    # * ``"auto"`` (default) -- geometric multigrid when the problem is inside
+    #   its convergence envelope (pure-Neumann operator, no cut cells, density
+    #   ratio <= ``mg_max_density_ratio``) and the Krylov solver otherwise.
+    # * ``"mg"`` -- force multigrid wherever the envelope guards allow; the
+    #   density-ratio guard stays active (a diverging V-cycle is never useful).
+    # * ``"krylov"`` -- always the SciPy Krylov path, even on a GPU (the
+    #   pre-multigrid behaviour; useful for validation).
+    pressure_gpu_solver: str = "auto"   # "auto" | "mg" | "krylov"
+    # Density-contrast ceiling for the multigrid V-cycle.  Rediscretised
+    # coarse operators converge for mild contrasts (measured on a 200x160
+    # drop case: ratio 5 -> 59 cycles, 6 -> 148, 7 -> diverges) and diverge
+    # beyond ~6, so the caller falls back to Krylov above this ratio -- where
+    # BiCGSTAB is also the faster choice.  Typical air/water VOF (ratio 833)
+    # always takes the Krylov path.
+    mg_max_density_ratio: float = 5.0
+    # Multigrid hierarchy depth control: coarsen until a level has at most
+    # this many cells, then solve it directly.  4096 caps the hierarchy at two
+    # coarsenings -- deeper ladders stagnate (measured; see the multigrid
+    # module docstring) -- so do not raise this hoping for more speed.
+    mg_coarse_max_cells: int = 4096
+
+    # -- GPU Krylov (BiCGSTAB + Jacobi) pressure-Poisson path ----------------
+    # When the multigrid guard declines (strong density contrast, e.g. air/
+    # water VOF) the pressure increment is normally solved with the CPU SciPy
+    # BiCGSTAB.  With ``use_gpu_krylov`` the same CSR system is uploaded to the
+    # device each step and the whole Krylov loop runs on the GPU
+    # (:class:`gpu.linear.GPUBiCGSTAB`) -- about 2x the CPU rate at production
+    # sizes (64^3 two-phase: ~2.0 s vs ~4.1 s on the RTX 4050).  Off by
+    # default: below ~16k cells the host-device round trips dominate.
+    use_gpu_krylov: bool = False
+    # Smallest system (cell count) served by the GPU Krylov path; smaller
+    # problems keep the CPU solver.
+    gpu_krylov_min_cells: int = 16384
 
     # ------------------------------------------------------------------ #
     @classmethod
